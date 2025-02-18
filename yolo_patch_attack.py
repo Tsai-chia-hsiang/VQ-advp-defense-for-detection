@@ -80,7 +80,7 @@ def main(
     # Loss functions : V8Detection loss, Variation loss, Non Printablitiy loss
     det_loss = v8DetLoss(model=v8detection_model, **{k:DEFAULT_CFG.get(k) for k in ['box','cls','dfl']})
     tv_loss = TotalVariation()
-    nps_loss = NPSCalculator(Path("adversarial_yolo")/"non_printability"/"30values.txt", psize)
+    nps_loss = NPSCalculator(patch_side=psize)
     
     # Trainable adversarial patch and patch applier (PatchAttacker)
     adv_patch = generate_patch(psize=psize, device=model.device)
