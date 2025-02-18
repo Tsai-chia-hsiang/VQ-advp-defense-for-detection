@@ -1,3 +1,5 @@
+from . import _LOCAL_DIR_ 
+from pathlib import Path
 import numpy as np
 import torch
 import torch.nn as nn
@@ -5,6 +7,9 @@ from ultralytics.utils import IterableSimpleNamespace
 from ultralytics.utils.loss import v8DetectionLoss
 from ultralytics.utils.tal import make_anchors
 from ultralytics.nn.tasks import DetectionModel
+
+
+DEFAULT_PB_FILE = _LOCAL_DIR_/"non_printability"/"30values.txt"
 
 class v8DetLoss(v8DetectionLoss):
     
@@ -114,11 +119,11 @@ class NPSCalculator(nn.Module):
     Module providing the functionality necessary to calculate the non-printability score (NMS) of an adversarial patch.
 
     """
-
-    def __init__(self, printability_file, patch_side, w:float=0.01):
+    def __init__(self, patch_side, printability_file:Path=DEFAULT_PB_FILE, w:float=0.01):
         super(NPSCalculator, self).__init__()
         self.printability_array = nn.Parameter(self.get_printability_array(printability_file, patch_side),requires_grad=False)
         self.w = w
+
     def forward(self, adv_patch:torch.Tensor):
         # calculate euclidian distance between colors in patch and colors in printability_array 
         # square root of sum of squared difference
