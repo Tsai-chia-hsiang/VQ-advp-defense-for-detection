@@ -1,0 +1,6 @@
+**/*.png
+**/*.jpg
+**/*.pt
+**/__pycache__
+debug
+.vscode
