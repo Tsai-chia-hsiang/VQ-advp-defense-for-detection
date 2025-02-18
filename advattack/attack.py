@@ -15,6 +15,14 @@ sys.path.append(osp.abspath(Path(__file__).parent.parent/"torchcvext"))
 from torchcvext.box import scale_box, xywh2xyxy, draw_boxes
 from torchcvext.convert import tensor2img
 
+DEFAULT_ATTACKER_ARGS = {
+    'contrast': (0.8,1.2),
+    'brightness':(-0.1, 0.1),
+    'angle':(-20, 20),
+    'noise':(-1, 1),
+    'noise_factor':0.1,
+    'patch_box_scale':0.2
+}
 
 class PatchAttacker():
 
@@ -70,7 +78,7 @@ class PatchAttacker():
         
         return F.grid_sample(patch, grid, align_corners=False)
  
-    def __call__(self, img:torch.Tensor, patch:torch.Tensor, bboxes:torch.Tensor, batch_idx:torch.Tensor, random_rotation_patch:bool=False):
+    def __call__(self, img:torch.Tensor, patch:torch.Tensor, bboxes:torch.Tensor, batch_idx:torch.Tensor, random_rotate_patch:bool=False):
         
         dev = img.device
         origin_box = scale_box(boxes=bboxes, imgsize=img.size()[::-1][:2], direction='back')
@@ -92,7 +100,7 @@ class PatchAttacker():
 
         patch = F.pad(patch, (int(pad[0] + 0.5), int(pad[0]), int(pad[1] + 0.5), int(pad[1])), mode='constant', value=0)
         angle =None
-        if random_rotation_patch:
+        if random_rotate_patch:
             angle = torch.empty(n_boxes, dtype=torch.float32, device=dev).uniform_(self.rotate_angle[0], self.rotate_angle[1])
         else:
             angle = torch.zeros(n_boxes, dtype=torch.float32, device=dev)
@@ -153,7 +161,7 @@ def ultralytics_yolobatch_draw_boxes(batch, save_to:Path=None, return_img_lst:bo
 
 def preprocess_yolo_batch_with_attack(
     batch:dict, patch:torch.Tensor, attacker:PatchAttacker, device:torch.device,
-    random_rotation_patch:bool=False, plot:bool=False
+    random_rotate_patch:bool=False, plot:bool=False
 )->dict[str, ]:
     """
     Apply the transformation in place at the batch level, 
@@ -189,7 +197,7 @@ def preprocess_yolo_batch_with_attack(
         patch = patch, img=batch["img"],  
         bboxes=batch['bboxes'], 
         batch_idx=batch['batch_idx'], 
-        random_rotation_patch=random_rotation_patch
+        random_rotate_patch=random_rotate_patch
     )
     for k in ["batch_idx", "cls", "bboxes"]:
         batch[k] = batch[k].to(device)

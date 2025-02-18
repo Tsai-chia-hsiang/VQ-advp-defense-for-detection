@@ -23,11 +23,11 @@ class PatchAttack_DetValidator(DetectionValidator):
         self.device = next(model.parameters()).device
         return super().init_metrics(model)
     
-    def __call__(self, model:DetectionModel, adv_patch:Optional[torch.Tensor]=None, random_rotate_patch:bool=False, plot_attacked_img:bool=False):
+    def __call__(self, model:DetectionModel, adv_patch:Optional[torch.Tensor]=None, random_rotate_patch:bool=False, debug:bool=False):
                 
         self.init_metrics(de_parallel(model))
         for batch in tqdm(self.dataloader):
-            batch = self.preprocess(batch=batch, adv_patch=adv_patch, random_rotate_patch=random_rotate_patch, plot_attacked_img=plot_attacked_img)
+            batch = self.preprocess(batch=batch, adv_patch=adv_patch, random_rotate_patch=random_rotate_patch, plot_attacked_img=debug)
             preds = model(batch["img"])
             preds = self.postprocess(preds)
             self.update_metrics(preds, batch)
@@ -40,12 +40,12 @@ class PatchAttack_DetValidator(DetectionValidator):
         
         return stats
     
-    def preprocess(self, batch:dict[str, Any], adv_patch:torch.Tensor=None, random_rotate_patch:bool=False, plot_attacked_img:bool=False):
+    def preprocess(self, batch:dict[str, Any], adv_patch:torch.Tensor=None, random_rotate_patch:bool=False, plot_attacked_img:bool=False, **kwargs):
         if adv_patch is not None:
             return preprocess_yolo_batch_with_attack(
                 attacker=self.attacker, patch=adv_patch, 
                 batch=batch, device=self.device, 
-                random_rotation_patch=random_rotate_patch,
+                random_rotate_patch=random_rotate_patch,
                 plot=plot_attacked_img
             )
         return super().preprocess(batch)
@@ -65,10 +65,14 @@ class PatchAttack_DetValidator(DetectionValidator):
         }
 
     @classmethod
-    def build_according_YOLO_with_dataset(cls, model:YOLO, dataset_cfg:Path, attacker:PatchAttacker, rect:bool=False, batchsz:int=16, save_dir:Optional[Path]=None)->"PatchAttack_DetValidator":
-        
+    def build_according_YOLO_with_dataset(cls, dataset_cfg:Path, attacker:PatchAttacker, model:YOLO=None, model_args:dict=None, rect:bool=False, batchsz:int=16, save_dir:Optional[Path]=None)->"PatchAttack_DetValidator":
+        """
+        Need to pass at least 1 of `model`, `model_args`.
+        - If both are pass, using model.overrides as default 
+        """
+
         data_args, dataset_args = get_data_args(
-            model_args=model.overrides, 
+            model_args=model.overrides if model is not None else model_args, 
             stride=max(int(model.model.stride.max()), 32),
             dataset_cfgfile_path = dataset_cfg,
             batch=batchsz,

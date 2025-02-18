@@ -47,8 +47,6 @@ def get_data_args(model_args:dict, stride:int, dataset_cfgfile_path:Path, mode:s
     dataset_args = check_det_dataset(args.data)
     return args, dataset_args
 
-
-
 def check_model_frozen(model:nn.Module):
     for k,v in model.named_parameters():
         if v.requires_grad:
