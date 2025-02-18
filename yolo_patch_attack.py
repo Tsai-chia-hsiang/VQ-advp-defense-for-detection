@@ -14,7 +14,7 @@ from ultralytics import YOLO
 from ultralytics.utils import DEFAULT_CFG
 from ultralytics.data.build import build_yolo_dataset, build_dataloader
 
-from tools import set_seed
+from tools import set_seed, a_device
 from tools import write_yaml, write_json
 from advattack.ultralytics_utils import get_data_args, check_model_frozen
 from advattack.attack import PatchAttacker, preprocess_yolo_batch_with_attack
@@ -38,14 +38,41 @@ def save_patch(patch:torch.Tensor, save_dir:Path, filename:str, epoch:int, metri
 
     cv2.imwrite(save_dir/f"{filename}.png", tensor2img(patch))
 
+def validataion(
+    pretrained_weight:Path, patch_path:Path, 
+    dataset_cfg:Path, proj:Path, seed:int, 
+    device:torch.device=torch.device("cuda:0"), batchsz:int=16,
+    random_rotation_patch=False, debug=False, **kwargs
+):
+    proj.mkdir(parents=True, exist_ok=True)
+    model = YOLO(pretrained_weight)
+    model = model.to(device=device)
+    print(f"attacking with {patch_path}")
+    patch = torch.load(patch_path, map_location='cpu')['patch']
+    validator = PatchAttack_DetValidator.build_according_YOLO_with_dataset(
+        model=model, dataset_cfg=dataset_cfg, 
+        batchsz=batchsz, save_dir=proj, attacker=PatchAttacker()
+    )
+    metrics = validator(
+        model=model.model,
+        adv_patch=patch, 
+        random_rotate_patch=random_rotation_patch,
+        plot_attacked_img=debug
+    )
+    print(metrics)
+    write_json(
+        {'data':str(dataset_cfg), 'seed':seed, 'metrics':metrics},
+        proj/"val_metrics.json"
+    )
 
-def main(
-    proj:Path, dataset_cfg:Path,
-    pretrained_weight:Path, method:Literal['gd', 'pdg'], seed:int=891122,
-    lr:float=2e-2, epochs:int=1000, batchsz:int=16, 
-    psize:int=300, det_loss_scale:bool=False, random_rotation_patch:bool=False,
-    device:torch.device=torch.device("cuda:0"),
-    tensorboard:bool=True, debug:bool=False,
+def adversarial_train(
+    pretrained_weight:Path, dataset_cfg:Path, proj:Path, seed:int, 
+    device:torch.device=torch.device('cuda', index=0),
+    method:Literal['gd', 'pdg']='gd', lr:float=2e-2,
+    epochs:int=1000, batchsz:int=16, psize:int=300, 
+    det_loss_scale:bool=False, 
+    random_rotation_patch:bool=False,
+    tensorboard:bool=True, debug:bool=False, **kwargs
 ):
     if proj.is_dir():
         msg = f"{proj} already exist, If you don't want to overwrite it, stop the program (Ctrl+C), passing another proj direction and then run it again"
@@ -222,6 +249,7 @@ if __name__ == "__main__":
     
     parser = ArgumentParser()
     
+    parser.add_argument("--task", type=str, default='train')
     parser.add_argument("--seed", type=int, default=891122)
     parser.add_argument("--proj", type=Path)
     parser.add_argument("--method", type=str, default='gd')
@@ -237,24 +265,17 @@ if __name__ == "__main__":
     parser.add_argument("--debug", action='store_true')
     parser.add_argument("--device", type=int, default=0)
 
-    cli_args = parser.parse_args() 
+    cli_args = vars(parser.parse_args()) 
+    cli_args["tensorboard"] = not cli_args["no_tensorboard"]
+    set_seed(cli_args["seed"])
+    cli_args["device"] = a_device(cli_args["device"])
     
-    cli_args.tensorboard = not cli_args.no_tensorboard
-    del cli_args.no_tensorboard
-
-    set_seed(cli_args.seed)
-    del cli_args.seed
-    
-    if cli_args.device < 0 or (not torch.cuda.is_available()):
-        cli_args.device = torch.device('cpu')
-    else:
-        N_GPUs_available = torch.cuda.device_count()
-        if cli_args.device < N_GPUs_available:
-            cli_args.device = torch.device('cuda', index=cli_args.device)
-        else:
-            cli_args.device = torch.device('cuda', index=N_GPUs_available-1)
-        
-    main(**vars(cli_args))
-    
+    match cli_args["task"]:
+        case 'train':
+            adversarial_train(**cli_args)
+        case 'val':
+            validataion(**cli_args)
+        case _:
+            raise KeyError(f"No such a task {cli_args['task']}.")
 
     
