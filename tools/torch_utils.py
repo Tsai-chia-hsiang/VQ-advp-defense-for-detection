@@ -15,3 +15,16 @@ def set_seed(seed=891122, loader=None):
         loader.sampler.generator.manual_seed(seed)
     except AttributeError:
         pass
+
+def a_device(device_id:int)->torch.device:
+    """
+    TODO: multi device case (for parallel forward)
+    """
+    if device_id < 0 or (not torch.cuda.is_available()):
+        return torch.device('cpu')
+    else:
+        N_GPUs_available = torch.cuda.device_count()
+        if device_id < N_GPUs_available:
+            return  torch.device('cuda', index=device_id)
+        else:
+            return torch.device('cuda', index=N_GPUs_available-1)

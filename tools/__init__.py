@@ -1,2 +1,2 @@
-from .torch_utils import set_seed
+from .torch_utils import *
 from .cfg_utils import *
