@@ -42,8 +42,9 @@ def save_patch(patch:torch.Tensor, save_dir:Path, filename:str, epoch:int, metri
 def main(
     proj:Path, dataset_cfg:Path,
     pretrained_weight:Path, method:Literal['gd', 'pdg'], seed:int=891122,
-    epochs:int=1000, batchsz:int=8, device:torch.device=torch.device("cuda:0"), 
+    lr:float=2e-2, epochs:int=1000, batchsz:int=16, 
     psize:int=300, det_loss_scale:bool=False, random_rotation_patch:bool=False,
+    device:torch.device=torch.device("cuda:0"),
     tensorboard:bool=True, debug:bool=False,
 ):
     if proj.is_dir():
@@ -59,6 +60,7 @@ def main(
         o={
             'data':str(dataset_cfg),
             'pretrained_weight':str(pretrained_weight),
+            'lr':lr,
             'epochs':epochs,
             "batchsz":batchsz,
             'psize':psize,
@@ -87,7 +89,7 @@ def main(
     attacker = PatchAttacker()
 
     # Optimizer and scheduler
-    patch_opt = Adam([adv_patch], lr=0.02, amsgrad=True)
+    patch_opt = Adam([adv_patch], lr=lr, amsgrad=True)
     patch_scheduler = optim.lr_scheduler.ReduceLROnPlateau(patch_opt, 'min', patience=50)
 
     data_args, dataset_args = get_data_args(
@@ -116,7 +118,14 @@ def main(
         attacker=attacker
     )
     
-    worst_mAP50 = 0.9667
+    clean_metrics = validator(
+        model=v8detection_model,
+        adv_patch=None, 
+        random_rotate_patch=random_rotation_patch,
+        plot_attacked_img=debug
+    )
+    worst_mAP50 = clean_metrics['mAP50']
+    print(f"clean mAP50: {worst_mAP50}")
 
     metrics_writer = TrainingMetricsWriter(
         loss_order=['box_loss', 'cls_loss', 'dfl', 'tv_loss', 'nps_loss'], 
@@ -185,6 +194,7 @@ def main(
         metrics_writer(epoch=e, loss=eloss, metrics=metrics)
 
         if metrics['mAP50'] <= worst_mAP50:
+            print(f"Get worse adversaral patch that makes mAP from {worst_mAP50} to {metrics['mAP50']} at {e}")
             save_patch(patch=adv_patch, save_dir=proj, metrics=metrics, filename='worst', epoch=e)
             worst_mAP50 = metrics['mAP50']
         
@@ -194,12 +204,15 @@ def main(
     metrics_writer.close()
     
     worst_patch = torch.load(proj/"worst.pt", weights_only=False)['patch']
-
-    cmp_metrics = validator.comparsion(
-        model=v8detection_model, adv_patch=worst_patch,
-        random_rotate_patch=random_rotation_patch    
-    )
+    final_metrics = validator(model=v8detection_model, adv_patch=worst_patch, random_rotate_patch=random_rotation_patch)
     
+    cmp_metrics = {
+        k:{
+            'clean':clean_metrics[k],
+            'attack':final_metrics[k]
+        } 
+        for k in clean_metrics
+    }
     print(cmp_metrics)
     write_json(cmp_metrics, proj/"final_val.json")
     # print(model.val(data=dataset_cfg).result_dict)
@@ -212,20 +225,35 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, default=891122)
     parser.add_argument("--proj", type=Path)
     parser.add_argument("--method", type=str, default='gd')
+    parser.add_argument("--lr", type=float, default=2e-2)
     parser.add_argument("--epochs", type=int, default=1000)
     parser.add_argument("--pretrained_weight", type=Path, default=Path("pretrained")/"yolov8n.pt")
     parser.add_argument("--dataset_cfg", type=Path, default=Path("INRIAPerson")/"inria.yaml")
     parser.add_argument("--batchsz", type=int, default=16)
     parser.add_argument("--det_loss_scale", action='store_true')
     parser.add_argument("--psize", type=int, default=300)
+    parser.add_argument('--no_tensorboard', action='store_true')
     parser.add_argument("--random_rotation_patch", action='store_true')
     parser.add_argument("--debug", action='store_true')
+    parser.add_argument("--device", type=int, default=0)
 
     cli_args = parser.parse_args() 
     
+    cli_args.tensorboard = not cli_args.no_tensorboard
+    del cli_args.no_tensorboard
+
     set_seed(cli_args.seed)
     del cli_args.seed
     
+    if cli_args.device < 0 or (not torch.cuda.is_available()):
+        cli_args.device = torch.device('cpu')
+    else:
+        N_GPUs_available = torch.cuda.device_count()
+        if cli_args.device < N_GPUs_available:
+            cli_args.device = torch.device('cuda', index=cli_args.device)
+        else:
+            cli_args.device = torch.device('cuda', index=N_GPUs_available-1)
+        
     main(**vars(cli_args))
     
 
