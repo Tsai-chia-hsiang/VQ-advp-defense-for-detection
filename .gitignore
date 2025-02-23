@@ -1,6 +1,12 @@
+!adv_patch
 **/*.png
 **/*.jpg
 **/*.pt
 **/__pycache__
 debug
 .vscode
+!./INRIAPerson/iniria.yaml
+!./INRIAPerson/readme.md
+!./INRIAPerson/*.py
+!./INRIAPerson/yolodata/readme.md
+INRIAPerson/
