@@ -3,6 +3,7 @@ import torch
 import gc
 import sys
 import cv2
+import torch.nn as nn
 import torch.optim as optim
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
@@ -16,7 +17,6 @@ from ultralytics.nn.tasks import DetectionModel
 from .ultralytics_utils import check_model_frozen
 from .ultralytics_utils import get_data_args
 from .attacker import PatchAttacker, DEFAULT_ATTACKER_CFG_FILE
-from .build import generate_patch
 from .loss import v8DetLoss, TotalVariation, NPSCalculator, DEFAULT_PB_FILE
 from .writer import TrainingMetricsWriter
 from .validation import PatchAttack_DetValidator
@@ -27,6 +27,20 @@ import os.path as osp
 sys.path.append(osp.abspath(_LOCAL_DIR_.parent))
 from torchcvext.convert import tensor2img
 from tools import write_json, refresh_dir, load_yaml, write_yaml
+
+def generate_patch(ptype:Literal['gray', 'random']="gray", psize:int=300, device:torch.device = torch.device("cpu")) -> nn.Parameter:
+    """
+    Generate a random patch as a starting point for optimization.
+    """
+    adv_patch:torch.Tensor=None
+    match ptype:
+        case 'gray':
+            adv_patch = torch.full((3, psize, psize), 0.5, device=device)
+        case 'random':
+            adv_patch = torch.rand((3, psize, psize), device=device)
+    
+    return nn.Parameter(adv_patch)
+
 
 class AdvTrain_EarlyStopping(EarlyStopping):
     
