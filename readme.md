@@ -11,4 +11,4 @@ Attack methods:
   
     - |Detector|Attack dataset|Command|
       |-|-|-|
-      |YOLOv8n, pretrained on COCO, conduct by Ultrayltics|INRIA Person|```python advpatch_attack.py --project ./INRIAPerson/adv_attack/gd --dataset_cfg ./INRIAPerson/inria.yaml```|
+      |YOLOv8n, pretrained on COCO, conduct by Ultrayltics|INRIA Person|```python advpatch_attack.py --project ./adv_patch --name adv_yolo --data ./INRIAPerson/inria.yaml --patch_random_rotate --patch_blur```|
