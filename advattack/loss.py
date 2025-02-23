@@ -1,4 +1,4 @@
-from . import _LOCAL_DIR_ 
+from . import _CFG_DIR_
 from pathlib import Path
 import numpy as np
 import torch
@@ -9,7 +9,7 @@ from ultralytics.utils.tal import make_anchors
 from ultralytics.nn.tasks import DetectionModel
 
 
-DEFAULT_PB_FILE = _LOCAL_DIR_/"non_printability"/"30values.txt"
+DEFAULT_PB_FILE =_CFG_DIR_/"30values.txt"
 
 class v8DetLoss(v8DetectionLoss):
     
