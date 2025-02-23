@@ -1,5 +1,5 @@
-# Ultralytics YOLO format INIRIA Dataset
-Put Ultralytics YOLO format INIRIA Dataset here
+# Ultralytics YOLO format INRIA Person Dataset
+Put Ultralytics YOLO format INRIA Person Dataset here
 
 ```
 .
