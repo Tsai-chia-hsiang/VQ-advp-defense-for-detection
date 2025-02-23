@@ -6,11 +6,9 @@ from ultralytics import YOLO
 import torch.nn as nn
 from ultralytics.nn.tasks import DetectionModel
 from ultralytics.models.yolo.detect.val import DetectionValidator
-#from ultralytics.models.yolo.detect.val import DetectionValidator
 from ultralytics.data.build import build_yolo_dataset, build_dataloader
 from ultralytics.utils.torch_utils import de_parallel, smart_inference_mode
-from ultralytics.utils.ops import Profile
-from .attack import PatchAttacker, preprocess_yolo_batch_with_attack
+from .attacker import PatchAttacker
 from .ultralytics_utils import get_data_args
 
 class PatchAttack_DetValidator(DetectionValidator):
@@ -23,11 +21,11 @@ class PatchAttack_DetValidator(DetectionValidator):
         self.device = next(model.parameters()).device
         return super().init_metrics(model)
     
-    def __call__(self, model:DetectionModel, adv_patch:Optional[torch.Tensor]=None, random_rotate_patch:bool=False, debug:bool=False):
+    def __call__(self, model:DetectionModel, adv_patch:Optional[torch.Tensor]=None, **pr_args):
                 
         self.init_metrics(de_parallel(model))
         for batch in tqdm(self.dataloader):
-            batch = self.preprocess(batch=batch, adv_patch=adv_patch, random_rotate_patch=random_rotate_patch, plot_attacked_img=debug)
+            batch = self.preprocess(batch=batch, adv_patch=adv_patch, **pr_args)
             preds = model(batch["img"])
             preds = self.postprocess(preds)
             self.update_metrics(preds, batch)
@@ -40,15 +38,15 @@ class PatchAttack_DetValidator(DetectionValidator):
         
         return stats
     
-    def preprocess(self, batch:dict[str, Any], adv_patch:torch.Tensor=None, random_rotate_patch:bool=False, plot_attacked_img:bool=False, **kwargs):
+    def preprocess(self, batch:dict[str, Any], adv_patch:torch.Tensor=None, patch_random_rotate:bool=False, patch_blur:bool=False, debug:bool=False, **kwargs):
+        batch = super().preprocess(batch)
         if adv_patch is not None:
-            return preprocess_yolo_batch_with_attack(
-                attacker=self.attacker, patch=adv_patch, 
-                batch=batch, device=self.device, 
-                random_rotate_patch=random_rotate_patch,
-                plot=plot_attacked_img
+            batch = self.attacker.attack_yolo_batch(
+                patch=adv_patch, batch=batch,  
+                patch_random_rotate=patch_random_rotate, patch_blur=patch_blur, 
+                plot=debug
             )
-        return super().preprocess(batch)
+        return batch
 
     def comparsion(self, model:DetectionModel, adv_patch:torch.Tensor, **kwargs) -> dict[str, dict[str, float]]:
         """
@@ -65,7 +63,7 @@ class PatchAttack_DetValidator(DetectionValidator):
         }
 
     @classmethod
-    def build_according_YOLO_with_dataset(cls, dataset_cfg:Path, attacker:PatchAttacker, model:YOLO=None, model_args:dict=None, rect:bool=False, batchsz:int=16, save_dir:Optional[Path]=None)->"PatchAttack_DetValidator":
+    def build_according_YOLO_with_dataset(cls, data:Path, attacker:PatchAttacker, model:YOLO=None, model_args:dict=None, rect:bool=False, batch:int=16, save_dir:Optional[Path]=None)->"PatchAttack_DetValidator":
         """
         Need to pass at least 1 of `model`, `model_args`.
         - If both are pass, using model.overrides as default 
@@ -74,8 +72,8 @@ class PatchAttack_DetValidator(DetectionValidator):
         data_args, dataset_args = get_data_args(
             model_args=model.overrides if model is not None else model_args, 
             stride=max(int(model.model.stride.max()), 32),
-            dataset_cfgfile_path = dataset_cfg,
-            batch=batchsz,
+            dataset_cfgfile_path = data,
+            batch=batch,
             mode='val'
         )
         data_args.workers = 1
@@ -97,7 +95,7 @@ class PatchAttack_DetValidator(DetectionValidator):
             dataloader=loader,
             attacker=attacker,
             save_dir=save_dir,
-            args=model.overrides|{'mode':'val','rect':rect, 'batch':batchsz, 'data':dataset_cfg},
+            args=model.overrides|{'mode':'val','rect':rect, 'batch':batch, 'data':data},
             _callbacks=model.callbacks
         )
         validator.data = dataset_args

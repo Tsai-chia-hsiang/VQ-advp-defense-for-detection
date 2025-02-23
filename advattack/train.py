@@ -2,21 +2,20 @@ from tqdm import tqdm
 import torch
 import gc
 import sys
-from copy import deepcopy
 import cv2
 import torch.optim as optim
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
-from typing import Literal, Any
+from typing import Literal, Any, Optional
 from pathlib import Path
 from ultralytics.utils import DEFAULT_CFG
-from ultralytics.utils.torch_utils import select_device, init_seeds
+from ultralytics.utils.torch_utils import select_device, init_seeds, EarlyStopping
 from ultralytics import YOLO
 from ultralytics.data.build import InfiniteDataLoader,  build_yolo_dataset, build_dataloader
 from ultralytics.nn.tasks import DetectionModel
 from .ultralytics_utils import check_model_frozen
 from .ultralytics_utils import get_data_args
-from .attack import PatchAttacker, preprocess_yolo_batch_with_attack, DEFAULT_ATTACKER_ARGS
+from .attacker import PatchAttacker, DEFAULT_ATTACKER_CFG_FILE
 from .build import generate_patch
 from .loss import v8DetLoss, TotalVariation, NPSCalculator, DEFAULT_PB_FILE
 from .writer import TrainingMetricsWriter
@@ -27,19 +26,51 @@ import os.path as osp
 
 sys.path.append(osp.abspath(_LOCAL_DIR_.parent))
 from torchcvext.convert import tensor2img
-from tools import write_json, refresh_dir, write_yaml
+from tools import write_json, refresh_dir, load_yaml, write_yaml
+
+class AdvTrain_EarlyStopping(EarlyStopping):
+    
+    def __init__(self, current_worst:float, patience:Optional[int]=None):
+        super().__init__(patience)
+        self.best_fitness = current_worst
+    
+    def __call__(self, epoch:int, fitness:float)->tuple[bool, bool]:
+        """
+        Check whether to stop training.
+
+        Args:
+            epoch (int): Current epoch of training
+            fitness (float): Fitness value of current epoch
+
+        Returns:
+            (bool): True if training should stop, False otherwise
+            (bool): True if validation result is better
+        """
+        is_improve = False
+        if fitness is None:  # check if fitness=None (happens when val=False)
+            return False, is_improve
+
+        if fitness <= self.best_fitness:  # allow for early zero-fitness stage of training
+            self.best_epoch = epoch
+            self.best_fitness = fitness
+            is_improve = True
+        delta = epoch - self.best_epoch  # epochs without improvement
+        self.possible_stop = delta >= (self.patience - 1)  # possible stop may occur next epoch
+        stop = delta >= self.patience  # stop training if patience exceeded
+
+        return stop, is_improve
+
 
 class AdvPatchAttack_YOLODetector_Trainer():
 
     def __init__(
-        self, pretrained_weight:Path, dataset_cfg:Path,
-        save_dir:Path, loss_args:dict[str, Any]=None,
-        device:int=0, scale_det_loss:bool=False,
-        batchsz:int=16, 
-        seed:int=891122, 
-        attacker_args:dict[str, tuple[float, float]|float]=DEFAULT_ATTACKER_ARGS,
-        psize:int=300, ptype:str='gray',
-        tensorboard:bool=True
+        self, detector:Path, data:Path,
+        project:Path, name:str, loss_args:dict[str, Any]=None,
+        device:str='0', batch:int=16,
+        scale_det_loss:bool=False, seed:int=891122, deterministic:bool=True, 
+        psize:int=300, ptype:str='random', 
+        attacker:Path=DEFAULT_ATTACKER_CFG_FILE, 
+        tensorboard:bool=True,
     ):
         """
         To much different from BaseTrainer of Ultralytics, Re-design it.
@@ -51,30 +82,25 @@ class AdvPatchAttack_YOLODetector_Trainer():
         --
 
         """
-
-        init_seeds(seed=seed)
-        self.pretrained_weight = pretrained_weight
-        self.dataset_cfg = dataset_cfg
-        self.device = select_device(device=f"{device}", verbose=False)
-        self.batchsz = batchsz
-        self.save_dir = refresh_dir(save_dir)
-        self.model_args, self.model = self.setup_model()
+        self.pretrained_weight = detector
+        self.save_dir = refresh_dir(project/name)
         
-        self.not_improve = 0
+        init_seeds(seed=seed, deterministic=deterministic)
+        self.device = select_device(device=f"{device}", verbose=False)
+        self.batchsz = batch
+        self.model_args, self.model = self.setup_model()
 
         self.data_args, self.dataset_args = get_data_args(
             model_args=self.model_args, 
             stride=max(int(self.model.stride.max()), 32),
-            dataset_cfgfile_path = self.dataset_cfg,
+            dataset_cfgfile_path = data,
             batch=self.batchsz,
             mode='val'
         )
-
         self.trainloader = self.get_dataloader(split='train')
         self.valloader = self.get_dataloader(split='val')
 
-        self.attacker = PatchAttacker(**attacker_args)
-
+        self.attacker = PatchAttacker(**load_yaml(attacker))
         self.adv_patch = generate_patch(ptype=ptype, psize=psize, device=self.device)
         
         self.optimizer:Optimizer = None
@@ -92,9 +118,9 @@ class AdvPatchAttack_YOLODetector_Trainer():
         
         self.epoch_metrics = {'mAP50':None, 'mAP50-95':None, 'fitness':None}
         self.consider = 'mAP50'
-        self.not_improve = 0
         self.clean_metrcis = self.eval_clean()
-        self.worst = self.clean_metrcis[self.consider] if self.clean_metrcis is not None else 1
+        self.stoper:AdvTrain_EarlyStopping = None
+        
         self.det_turn = ['box','cls','dfl']
         self.metrics_writer = TrainingMetricsWriter(
             loss_order = self.det_turn + list(i for i in self.loss_dict.keys() if i!= 'det'),
@@ -102,6 +128,14 @@ class AdvPatchAttack_YOLODetector_Trainer():
             file=self.save_dir/f"log.csv",
             tb_dir=self.save_dir if tensorboard else None
         )
+        self.args_settting = {
+            'data':str(data), 
+            'batch':batch,
+            'pretrained_weight':str(self.pretrained_weight),
+            'psize':psize, 'ptype':ptype,
+            "det_loss_scale":self.scale_det_loss,
+            'seed':seed, 'deterministics':deterministic
+        }
     
     def eval_clean(self) -> dict[str, float]|None:
         if self.valloader is not None:
@@ -120,7 +154,7 @@ class AdvPatchAttack_YOLODetector_Trainer():
                 save_dir=self.save_dir, 
                 args=self.model_args|{
                     'mode':'val','rect':False, 'batch':self.batchsz, 
-                    'data':self.dataset_cfg
+                    'data':self.dataset_args
                 }
             ) 
             validator.data = self.dataset_args
@@ -163,29 +197,31 @@ class AdvPatchAttack_YOLODetector_Trainer():
     def model_forward(self, batch):
         return self.model(batch['img'])
 
-    def train(
-        self, method:Literal['gd', 'pgd']='gd', lr:float=2e-2, epoch:int=1000, 
-        preprocess_args:dict[str, Any]=None, patience=None
-    ):
-        pr_args = preprocess_args if preprocess_args is not None else {}
-        if patience is None:
-            patience = epoch
+    def train(self, lr:float=2e-2, epochs:int=100, patience:Optional[int]=None,method:Literal['gd', 'pgd']='gd', preprocess_args:dict[str, Any]=None):
         
+        pr_args = preprocess_args if preprocess_args is not None else {}
         self.method = method
+        print(f"write training args to {self.save_dir/'args.yaml'}")
+        write_yaml({**self.args_settting, **pr_args, **{'lr':lr, 'epochs':epochs,'method':method}}, self.save_dir/f"args.yaml")
+        
+        self.stoper = AdvTrain_EarlyStopping(patience=patience, current_worst=self.clean_metrcis[self.consider])
+        
         if self.method == 'gd':
             self.optimizer = optim.Adam([self.adv_patch], lr=lr, amsgrad=True)
-            self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer , 'min', patience=50)
-         
+            self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer , 'min', patience=patience//2 if patience is not None else 5)
+    
         loss_log = {k:0 for k in self.metrics_writer.loss_order}
-
-        for _e in range(epoch):
+        
+        for _e in range(epochs):
             e = _e+1
             pbar = tqdm(self.trainloader)
-            pbar.set_postfix(ordered_dict={'epoch':f"{e}/{epoch}", 'patience':f"{self.not_improve}/{patience}"})
+            pbar.set_postfix(ordered_dict={'epoch':f"{e}/{epochs}", "metrics":self.epoch_metrics[self.consider], 'patience':f"{_e - self.stoper.best_epoch}/{self.stoper.patience}"})
         
             for k in loss_log:
                 loss_log[k] = 0
-        
+            
+            self.adv_patch.requires_grad = True
+
             for batch in pbar:
                 
                 if self.optimizer is not None:
@@ -194,45 +230,43 @@ class AdvPatchAttack_YOLODetector_Trainer():
                 batch = self.preprocess(batch=batch, **pr_args)
                 preds = self.model_forward(batch=batch)
                 
-                tloss = {
+                tloss:dict[str, torch.Tensor] = {
                     **self.cal_det_loss(preds=preds, batch=batch), 
                     **self.cal_other_loss(preds=preds, batch=batch)
                 }
 
-                total_loss = sum([v for _,v in tloss.items()]) 
+                total_loss = sum([v for _,v in tloss.items()])
                 total_loss.backward()
                 self.optimizer_step()
 
                 for l in loss_log:
                     loss_log[l] += float(tloss[l].detach())
-
             
             loss_log = {k:loss_log[k]/len(self.trainloader) for k in loss_log}
             
             self.scheduler_step(loss_log=loss_log, epoch=e, iterations=e*len(self.trainloader))
-        
-            if self.valloader is not None:
-                # TODO: using with torch.no_grad() will cause inference_mode RE, 
-                # Try to debug currently
-                self.adv_patch.requires_grad = False
-                self.epoch_metrics = self.valloader(model=self.model, adv_patch=self.adv_patch, **pr_args)
-                self.adv_patch.requires_grad = True
             
+            
+            if self.valloader is not None:   
+                self.adv_patch.requires_grad = False          
+                self.epoch_metrics = self.valloader(model=self.model, adv_patch=self.adv_patch, **pr_args)
+
             loss_log = {
                 k:v*(-1) if  (k in self.det_turn and self.method == 'gd') else v 
                 for k, v in loss_log.items()
             }
             self.metrics_writer(epoch=e, loss=loss_log, metrics=self.epoch_metrics)
-        
-            if self.check_if_update(epoch=e):
+            stop, update = self.stoper(epoch=e, fitness=self.epoch_metrics[self.consider])
+            if update:
+                print(f"New worst {self.consider}: {self.stoper.best_fitness}")
                 self.save_model(name='worst', epoch=e)
             
-            self.save_model(name='last', epoch=e)
-            if self.not_improve == patience:
+            self.save_model(name='last', epoch=e) 
+            if stop:
                 break
-        
+
         self.metrics_writer.close()
-        
+
         return self.final_eval(preprocess_args=pr_args)
     
     def final_eval(self, preprocess_args:dict=None) -> dict[str, dict[str, float]]|None:
@@ -247,7 +281,7 @@ class AdvPatchAttack_YOLODetector_Trainer():
             print(f"attack fail! non of those epoch {self.consider} is worse than {self.worst}, return None")
             return None
 
-        patch = torch.load(to_test, weights_only=False)['patch']
+        patch = torch.load(to_test, weights_only=False)['patch'].to(self.device)
         FM = self.valloader(model=self.model, adv_patch=patch, **preprocess_args)
         
         cmp = {
@@ -264,20 +298,6 @@ class AdvPatchAttack_YOLODetector_Trainer():
         self._clear_memory()
         #print(cmp)
         return cmp
-
-    def check_if_update(self, epoch:int) -> bool:
-    
-        if self.epoch_metrics[self.consider] is None:
-            return False
-    
-        if self.epoch_metrics[self.consider] <= self.worst:
-            print(f"Get worse adversaral patch that makes mAP from {self.worst} to {self.epoch_metrics[self.consider]} at {epoch}")
-            self.worst = self.epoch_metrics[self.consider]
-            self.not_improve = 0
-            return True
-        
-        self.not_improve += 1
-        return False
 
     def setup_model(self) -> tuple[dict, DetectionModel]:
         model = YOLO(self.pretrained_weight)
@@ -317,14 +337,18 @@ class AdvPatchAttack_YOLODetector_Trainer():
             workers=self.data_args.workers
         )
 
-    def preprocess(self, batch, random_rotate_patch:bool=True, debug:bool=False, **kwargs)-> dict[str, Any]:
+    def preprocess(self, batch, patch_random_rotate:bool=False, patch_blur:bool=False, debug:bool=False, **kwargs)-> dict[str, Any]:
         
-        return preprocess_yolo_batch_with_attack(
-            attacker=self.attacker, 
-            patch=self.adv_patch, 
-            device=self.device,
-            batch=batch,  
-            random_rotate_patch=random_rotate_patch,
+        batch["img"] = batch["img"].to(self.device, non_blocking=True)
+        batch["img"] = batch["img"].float() / 255
+        
+        for k in ["batch_idx", "cls", "bboxes"]:
+            batch[k] = batch[k].to(self.device)
+        
+        return self.attacker.attack_yolo_batch(
+            patch=self.adv_patch, batch=batch,  
+            patch_random_rotate=patch_random_rotate,
+            patch_blur=patch_blur,
             plot=debug
         )
 
