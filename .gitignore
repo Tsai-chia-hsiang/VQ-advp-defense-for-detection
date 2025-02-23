@@ -1,9 +1,10 @@
-!adv_patch
+**/events.out*
 **/*.png
 **/*.jpg
 **/*.pt
 **/__pycache__
 debug
+!./adv_patch
 .vscode
 !./INRIAPerson/iniria.yaml
 !./INRIAPerson/readme.md
