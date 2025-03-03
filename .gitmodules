@@ -1,6 +1,8 @@
 [submodule "torchcvext"]
 	path = torchcvext
 	url = https://github.com/Tsai-chia-hsiang/torchcvext.git
+	branch = main
+
 [submodule "taming_transformers"]
 	path = taming_transformers
 	url = https://github.com/CompVis/taming-transformers.git
