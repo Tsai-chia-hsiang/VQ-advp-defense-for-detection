@@ -14,11 +14,11 @@ from advattack.inference import compare_visualization
 
 def validataion(
     data:Path, detector:Path, pretrained_patch:Path, 
-    project:Path, name:str,   
+    project:Path, name:str,  conf:float=0.25, 
     batch:int=16,  attacker=DEFAULT_ATTACKER_CFG_FILE,
     seed:int=89112, deterministic:bool=True, device:str='0',
     patch_random_rotate:bool=False, patch_blur:bool=False,
-    debug:bool=False, 
+    debug:bool=False, clean=False, vq:bool=False,
     **kwargs
 ):
     
@@ -33,11 +33,13 @@ def validataion(
     validator = PatchAttack_DetValidator.build_according_YOLO_with_dataset(
         model=model, data=data, 
         batch=batch, save_dir=project/name, 
+        conf=conf,
         attacker=PatchAttacker(**load_yaml(attacker))
     )
     metrics = validator.comparsion(
         model=model.model,
-        adv_patch=patch, 
+        adv_patch=patch if not clean else None,
+        vq=vq, 
         patch_random_rotate=patch_random_rotate,
         patch_blur=patch_blur,
         debug=debug
@@ -64,22 +66,27 @@ def lazy_arg_parsers():
     cfg_keys = {
         "patch_transform_args":["patch_random_rotate", "patch_blur"],
         "trainer_args":[
-            "detector", "data",
+            "detector", "data","to_attack", "logit_to_prob", "conf",
             "project", "name", "psize", "ptype", "attacker", "batch", "device",
+            "sup_prob_loss", 
             "seed", "deterministic", "tensorboard"
         ],
         "validator_args":[
             "detector", "pretrained_patch", 
-            "data","project",
-            "name", "seed", "deterministic", "device"
+            "data","project", "attacker", "batch",
+            "name", "seed", "deterministic", "device",
+            "conf", "clean", "vq"
         ],
         "hyp":["lr", "epochs", "patience"]
     }
     
     
     parser.add_argument("--detector", type=Path, default=Path("pretrained")/"yolov8n.pt")
+    parser.add_argument("--sup_prob_loss", action='store_true')
+    parser.add_argument("--logit_to_prob", action='store_true')
+    parser.add_argument("--conf", type=float, default=0.5)
     parser.add_argument("--data", type=Path, default=Path("INRIAPerson")/"inria.yaml")
-    parser.add_argument("--project", type=Path, default=Path("run"))
+    parser.add_argument("--project", type=Path, default=Path("adv_patch"))
     parser.add_argument("--name", type=str, default="advp_attack")
     parser.add_argument("--psize", type=int, default=300)
     parser.add_argument("--ptype", type=str,choices=['random', 'gray'], default='random')
@@ -92,14 +99,18 @@ def lazy_arg_parsers():
     parser.add_argument("--pretrained_patch", type=Path)
     parser.add_argument("--patch_random_rotate", action='store_true')
     parser.add_argument("--patch_blur", action='store_true')
+    parser.add_argument("--to_attack", type=Path, default=Path("attack_cls.yaml"))
+    parser.add_argument("--clean", action='store_true')
+    parser.add_argument("--vq", action='store_true')
     
     # training hyp
-    
+    import math
     parser.add_argument("--lr", type=float, default=1e-2)
     parser.add_argument("--epochs", type=int, default=50)
-    parser.add_argument("--patience", type=int, default=10)
-    parser.add_argument("--det_loss_scale", action='store_true')
+    parser.add_argument("--patience", type=int, default=math.inf)
+    #parser.add_argument("--det_loss_scale", action='store_true')
     parser.add_argument("--method", type=str, default='gd')
+    # parser.add_argument("--det_terms", nargs='+', type=str, default=['box', 'prob'])
     
     parser.add_argument("--debug", action='store_true')
     
