@@ -1,6 +1,7 @@
 from tqdm import tqdm
 import torch
 import gc
+from torch.nn import functional as F
 import sys
 import cv2
 import torch.nn as nn
@@ -17,7 +18,7 @@ from ultralytics.nn.tasks import DetectionModel
 from .ultralytics_utils import check_model_frozen
 from .ultralytics_utils import get_data_args
 from .attacker import PatchAttacker, DEFAULT_ATTACKER_CFG_FILE
-from .loss import v8DetLoss, TotalVariation, NPSCalculator, DEFAULT_PB_FILE
+from .loss import Supervised_V8Detection_MaxProb_Loss, V8Detection_MaxProb_Loss, TotalVariation, NPSCalculator, DEFAULT_PB_FILE
 from .writer import TrainingMetricsWriter
 from .validation import PatchAttack_DetValidator
 from .ultralytics_utils import get_data_args
@@ -78,13 +79,13 @@ class AdvTrain_EarlyStopping(EarlyStopping):
 class AdvPatchAttack_YOLODetector_Trainer():
 
     def __init__(
-        self, detector:Path, data:Path,
+        self, detector:Path, to_attack:Path, data:Path,
         project:Path, name:str, loss_args:dict[str, Any]=None,
-        device:str='0', batch:int=16,
-        scale_det_loss:bool=False, seed:int=891122, deterministic:bool=True, 
-        psize:int=300, ptype:str='random', 
-        attacker:Path=DEFAULT_ATTACKER_CFG_FILE, 
-        tensorboard:bool=True,
+        device:str='0', batch:int=16, seed:int=891122, deterministic:bool=True, 
+        psize:int=300, ptype:str='random',
+        conf:float=0.25, attacker:Path=DEFAULT_ATTACKER_CFG_FILE, 
+        sup_prob_loss:bool=False, logit_to_prob:bool=False,
+        tensorboard:bool=True
     ):
         """
         To much different from BaseTrainer of Ultralytics, Re-design it.
@@ -98,7 +99,7 @@ class AdvPatchAttack_YOLODetector_Trainer():
         """
         self.pretrained_weight = detector
         self.save_dir = refresh_dir(project/name)
-        
+        self.to_attack = torch.tensor(load_yaml(to_attack)).to(dtype=torch.long)
         init_seeds(seed=seed, deterministic=deterministic)
         self.device = select_device(device=f"{device}", verbose=False)
         self.batchsz = batch
@@ -120,25 +121,23 @@ class AdvPatchAttack_YOLODetector_Trainer():
         self.optimizer:Optimizer = None
         self.scheduler:LRScheduler = None
         self.method:str=None
-        
-        self.scale_det_loss = scale_det_loss
+
 
         self.loss_dict:dict[str, Any] = {   
-            **self._init_det_loss(),
+           **self._init_prob_loss(logit_to_prob=logit_to_prob, supervised=sup_prob_loss), 
             **self._init_other_loss(**(loss_args if loss_args is not None else {}))
         }
 
-        self.valloader = self.get_validator()
+        self.valloader = self.get_validator(conf=conf)
         
         self.epoch_metrics = {'mAP50':None, 'mAP50-95':None, 'fitness':None}
         self.consider = 'mAP50'
         self.clean_metrcis = self.eval_clean()
         self.stoper:AdvTrain_EarlyStopping = None
         
-        self.det_turn = ['box','cls','dfl']
         self.metrics_writer = TrainingMetricsWriter(
-            loss_order = self.det_turn + list(i for i in self.loss_dict.keys() if i!= 'det'),
-            metrics_order=list(self.epoch_metrics.keys()),
+            loss_order =  list(self.loss_dict.keys()),
+            metrics_order= list(self.epoch_metrics.keys()),
             file=self.save_dir/f"log.csv",
             tb_dir=self.save_dir if tensorboard else None
         )
@@ -147,8 +146,10 @@ class AdvPatchAttack_YOLODetector_Trainer():
             'batch':batch,
             'pretrained_weight':str(self.pretrained_weight),
             'psize':psize, 'ptype':ptype,
-            "det_loss_scale":self.scale_det_loss,
-            'seed':seed, 'deterministics':deterministic
+            'seed':seed, 'deterministics':deterministic,
+            'logit_to_prob':logit_to_prob, 
+            'prob_supervised':sup_prob_loss,
+            'conf':conf
         }
     
     def eval_clean(self) -> dict[str, float]|None:
@@ -159,13 +160,14 @@ class AdvPatchAttack_YOLODetector_Trainer():
             return M
         return None
     
-    def get_validator(self)->PatchAttack_DetValidator|None:
+    def get_validator(self, conf:float=0.25)->PatchAttack_DetValidator|None:
         
         if self.valloader is not None:
 
             validator = PatchAttack_DetValidator( 
                 attacker=self.attacker, 
-                save_dir=self.save_dir, 
+                save_dir=self.save_dir,
+                conf=conf, 
                 args=self.model_args|{
                     'mode':'val','rect':False, 'batch':self.batchsz, 
                     'data':self.dataset_args
@@ -180,27 +182,26 @@ class AdvPatchAttack_YOLODetector_Trainer():
         
         return None
 
-    def _init_det_loss(self):
-        return {'det':v8DetLoss(model=self.model, **{k:DEFAULT_CFG.get(k) for k in ['box','cls','dfl']})}
-    
-    def _init_other_loss(self, w_tv:float=2.5, printability_file=DEFAULT_PB_FILE, **kwargs):
+    def _init_prob_loss(self, supervised=False, logit_to_prob:bool=False):
         return {
+           'prob':V8Detection_MaxProb_Loss(
+               model=self.model, to_attack=self.to_attack
+            ) if not supervised 
+            else Supervised_V8Detection_MaxProb_Loss(
+                model=self.model, to_attack=self.to_attack, 
+                logit_to_prob=logit_to_prob
+            )
+        }
+           
+    def _init_other_loss(self, w_tv:float=2.5, printability_file=DEFAULT_PB_FILE, **kwargs):
+        return { 
             'tv':TotalVariation(w=w_tv),
             'nps':NPSCalculator(patch_side=self.adv_patch.size(-1), printability_file=printability_file)
         }
-    
-    def cal_det_loss(self, preds, batch) -> tuple[str, torch.Tensor]:
-        
-        det:torch.Tensor = self.loss_dict['det'](preds=preds, batch=batch)
-        bsz = len(batch["img"])
-        
-        if self.scale_det_loss:
-            det *= bsz
-        if self.method == "gd":
-            det *= -1
-    
-        return {'box':det[0], 'cls':det[1], 'dfl':det[2]}
-    
+
+    def cal_prob_loss(self, preds, batch)->dict[str, torch.Tensor]:
+        return {'prob':self.loss_dict['prob'](preds=preds, batch=batch)}
+
     def cal_other_loss(self, preds, batch)->dict[str, torch.Tensor]:
         
         return {
@@ -222,9 +223,10 @@ class AdvPatchAttack_YOLODetector_Trainer():
         
         if self.method == 'gd':
             self.optimizer = optim.Adam([self.adv_patch], lr=lr, amsgrad=True)
-            self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer , 'min', patience=patience//2 if patience is not None else 5)
+            self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer , 'min', patience=50)
     
         loss_log = {k:0 for k in self.metrics_writer.loss_order}
+        self.valloader.training = True
         
         for _e in range(epochs):
             e = _e+1
@@ -245,11 +247,10 @@ class AdvPatchAttack_YOLODetector_Trainer():
                 preds = self.model_forward(batch=batch)
                 
                 tloss:dict[str, torch.Tensor] = {
-                    **self.cal_det_loss(preds=preds, batch=batch), 
+                    **self.cal_prob_loss(preds=preds, batch=batch), 
                     **self.cal_other_loss(preds=preds, batch=batch)
                 }
-
-                total_loss = sum([v for _,v in tloss.items()])
+                total_loss = self._agg_loss(tloss=tloss)
                 total_loss.backward()
                 self.optimizer_step()
 
@@ -265,10 +266,7 @@ class AdvPatchAttack_YOLODetector_Trainer():
                 self.adv_patch.requires_grad = False          
                 self.epoch_metrics = self.valloader(model=self.model, adv_patch=self.adv_patch, **pr_args)
 
-            loss_log = {
-                k:v*(-1) if  (k in self.det_turn and self.method == 'gd') else v 
-                for k, v in loss_log.items()
-            }
+
             self.metrics_writer(epoch=e, loss=loss_log, metrics=self.epoch_metrics)
             stop, update = self.stoper(epoch=e, fitness=self.epoch_metrics[self.consider])
             if update:
@@ -283,6 +281,9 @@ class AdvPatchAttack_YOLODetector_Trainer():
 
         return self.final_eval(preprocess_args=pr_args)
     
+    def _agg_loss(self, tloss:dict[str, torch.Tensor], **kwargs)->torch.Tensor:
+        return sum([v for _, v in tloss.items()])
+       
     def final_eval(self, preprocess_args:dict=None) -> dict[str, dict[str, float]]|None:
         
         to_test = self.save_dir/"worst.pt"
@@ -296,6 +297,7 @@ class AdvPatchAttack_YOLODetector_Trainer():
             return None
 
         patch = torch.load(to_test, weights_only=False)['patch'].to(self.device)
+        self.valloader.training = False
         FM = self.valloader(model=self.model, adv_patch=patch, **preprocess_args)
         
         cmp = {
