@@ -10,12 +10,19 @@ from ultralytics.data.build import build_yolo_dataset, build_dataloader
 from ultralytics.utils.torch_utils import de_parallel, smart_inference_mode
 from .attacker import PatchAttacker
 from .ultralytics_utils import get_data_args
+import sys
+import os
+from pathlib import Path
+sys.path.append(os.path.abspath(Path(__file__).parent))
+from taming_transformers.ultray_do import ultralytics_batch_recons
 
 class PatchAttack_DetValidator(DetectionValidator):
     
-    def __init__(self, attacker:PatchAttacker, dataloader=None, save_dir=None, pbar=None, args=None, _callbacks=None):
+    def __init__(self, attacker:PatchAttacker, conf:float=0.25, dataloader=None, save_dir=None, pbar=None, args=None, _callbacks=None):
         super().__init__(dataloader, save_dir, pbar, args, _callbacks)
         self.attacker = attacker
+        self.training = False
+        self.args.conf = conf
 
     def init_metrics(self, model:nn.Module):
         self.device = next(model.parameters()).device
@@ -33,12 +40,14 @@ class PatchAttack_DetValidator(DetectionValidator):
         stats = self.get_stats()
         self.check_stats(stats)
         self.finalize_metrics()
-        
+        if not self.training:
+            self.args.verbose=True
+            self.print_results()
         stats = {k.replace("metrics/","").replace("(B)", ""):float(v) for k,v in stats.items()}
         
         return stats
     
-    def preprocess(self, batch:dict[str, Any], adv_patch:torch.Tensor=None, patch_random_rotate:bool=False, patch_blur:bool=False, debug:bool=False, **kwargs):
+    def preprocess(self, batch:dict[str, Any], adv_patch:torch.Tensor=None, patch_random_rotate:bool=False, patch_blur:bool=False, debug:bool=False, vq:bool=False, **kwargs):
         batch = super().preprocess(batch)
         if adv_patch is not None:
             batch = self.attacker.attack_yolo_batch(
@@ -46,24 +55,37 @@ class PatchAttack_DetValidator(DetectionValidator):
                 patch_random_rotate=patch_random_rotate, patch_blur=patch_blur, 
                 plot=debug
             )
+        if vq:
+            batch = ultralytics_batch_recons(batch=batch)
+        
         return batch
 
-    def comparsion(self, model:DetectionModel, adv_patch:torch.Tensor, **kwargs) -> dict[str, dict[str, float]]:
+    def comparsion(self, model:DetectionModel, adv_patch:torch.Tensor, vq:bool=False, **kwargs) -> dict[str, dict[str, float]]:
         """
         Compare the result of clean data with data under adversarial patch attack using adv_patch.  
         """ 
-        clean_metrics = self(model=model, adv_patch=None,**kwargs)
-        attack_metrics = self(model=model, adv_patch=adv_patch, **kwargs)
+        
+        clean_metrics = self(model=model, adv_patch=None, **kwargs)
+        
+        attack_metrics = {k:None for k in clean_metrics}
+        vq_attack_metrics = {k:None for k in clean_metrics}
+
+        if adv_patch is not None:
+            attack_metrics = self(model=model, adv_patch=adv_patch, **kwargs)
+        if vq:
+            vq_attack_metrics = self(model=model, adv_patch=adv_patch, vq=vq, **kwargs)
+        
         return {
             k:{
                 'clean':clean_metrics[k],
-                'attack':attack_metrics[k]
+                'attack':attack_metrics[k],
+                'vq_fix':vq_attack_metrics[k]
             }
             for k in clean_metrics
         }
 
     @classmethod
-    def build_according_YOLO_with_dataset(cls, data:Path, attacker:PatchAttacker, model:YOLO=None, model_args:dict=None, rect:bool=False, batch:int=16, save_dir:Optional[Path]=None)->"PatchAttack_DetValidator":
+    def build_according_YOLO_with_dataset(cls, data:Path, attacker:PatchAttacker, model:YOLO=None, model_args:dict=None, conf:float=0.25, rect:bool=False, batch:int=16, save_dir:Optional[Path]=None)->"PatchAttack_DetValidator":
         """
         Need to pass at least 1 of `model`, `model_args`.
         - If both are pass, using model.overrides as default 
@@ -93,6 +115,7 @@ class PatchAttack_DetValidator(DetectionValidator):
 
         validator = cls( 
             dataloader=loader,
+            conf=conf,
             attacker=attacker,
             save_dir=save_dir,
             args=model.overrides|{'mode':'val','rect':rect, 'batch':batch, 'data':data},
