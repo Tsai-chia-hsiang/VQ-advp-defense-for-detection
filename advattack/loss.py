@@ -3,6 +3,7 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from ultralytics.utils import IterableSimpleNamespace
 from ultralytics.utils.loss import v8DetectionLoss
 from ultralytics.utils.tal import make_anchors
@@ -11,34 +12,21 @@ from ultralytics.nn.tasks import DetectionModel
 
 DEFAULT_PB_FILE =_CFG_DIR_/"30values.txt"
 
-class v8DetLoss(v8DetectionLoss):
+class Supervised_V8Detection_MaxProb_Loss(v8DetectionLoss):
     
-    def __init__(self, model:DetectionModel, tal_topk=10, box:float=None, cls:float=None, dfl:float=None):
-        """
-        Instancing v8DetectionLoss for Prediction Model.
-        - Same as ultralytics.utils.loss.v8DetectionLoss, but provides convenience for independent instantiation without a 
-        ultrayltics DetectionTrainer wrapper.  
-        """
+    def __init__(self, model:DetectionModel, to_attack:torch.Tensor, logit_to_prob:bool=False, tal_topk=10):
+
         assert isinstance(model, DetectionModel)
         super().__init__(model, tal_topk)
 
         if isinstance(self.hyp, dict):
             self.hyp = IterableSimpleNamespace(**self.hyp)
         
-        for l, w in {'box':box, 'cls':cls, 'dfl':dfl}.items():
-            if self.hyp.get(l, None) is None:
-                assert w is not None
-                setattr(self.hyp, l, w)
-
+        self.to_attack = to_attack.detach().clone()
+        self.logit_to_prob = logit_to_prob
 
     def __call__(self, preds, batch):
-        """
-        
-        Return (cls_loss, det_loss, dfloss) separately WITHOUT scaled by batchsize
-        - Make follow-up processes more flexible.
-        
-        """
-        loss = torch.zeros(3, device=self.device)  # box, cls, dfl
+
         feats = preds[1] if isinstance(preds, tuple) else preds
         pred_distri, pred_scores = torch.cat([xi.view(feats[0].shape[0], self.no, -1) for xi in feats], 2).split(
             (self.reg_max * 4, self.nc), 1
@@ -72,25 +60,59 @@ class v8DetLoss(v8DetectionLoss):
             gt_bboxes,
             mask_gt,
         )
-
-        target_scores_sum = max(target_scores.sum(), 1)
-
-        # Cls loss
-        # loss[1] = self.varifocal_loss(pred_scores, target_scores, target_labels) / target_scores_sum  # VFL way
-        loss[1] = self.bce(pred_scores, target_scores.to(dtype)).sum() / target_scores_sum  # BCE
-
-        # Bbox loss
-        if fg_mask.sum():
-            target_bboxes /= stride_tensor
-            loss[0], loss[2] = self.bbox_loss(
-                pred_distri, pred_bboxes, anchor_points, target_bboxes, target_scores, target_scores_sum, fg_mask
-            )
-
-        loss[0] *= self.hyp.box  # box gain
-        loss[1] *= self.hyp.cls  # cls gain
-        loss[2] *= self.hyp.dfl  # dfl gain
         
-        return loss # loss.sum() * batch_size, loss.detach()  # loss(box, cls, dfl)
+        return self.extract_fg_max_prob(target_scores=target_scores, pscores=pred_scores)
+    
+    def extract_fg_max_prob(self, target_scores:torch.Tensor, pscores:torch.Tensor)->torch.Tensor:
+        
+        if self.to_attack.device != target_scores.device:
+            self.to_attack = self.to_attack.to(target_scores.device)
+        
+        pred_scores = F.sigmoid(pscores) if self.logit_to_prob else pscores
+    
+        logit, cls_idx = target_scores.max(dim=-1)
+        attack_mask = (logit > 0) & torch.isin(cls_idx, self.to_attack)
+        fg_scores = pred_scores[attack_mask].max()
+        if attack_mask.any():
+            fg_scores = pred_scores[attack_mask].max()  # Get max score among valid samples
+            return fg_scores.mean()  # Mean over batch
+        else:
+            return torch.tensor(0.0, device=target_scores.device)  
+
+
+class V8Detection_MaxProb_Loss(nn.Module):
+
+    def __init__(self, model:DetectionModel, to_attack:torch.Tensor, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        m =  model.model[-1]
+        self.reg_max = m.reg_max
+        self.nc = m.nc
+        self.no = m.nc + m.reg_max * 4
+        self.to_attack = to_attack.clone().detach()
+
+    def forward(self, preds, **kwargs) -> dict[str, torch.Tensor]:
+        
+        feats = preds[1] if isinstance(preds, tuple) else preds
+        
+        if self.to_attack.device != feats[0].device:
+            self.to_attack = self.to_attack.to(feats[0].device)
+        
+        
+        _, pred_scores = torch.cat([xi.view(feats[0].shape[0], self.no, -1) for xi in feats], 2).split(
+            (self.reg_max*4, self.nc), 1
+        )
+        pred_scores = pred_scores.permute(0, 2, 1).contiguous()
+        normal_confs = pred_scores.sigmoid()
+        logit, cls_idx = normal_confs.max(dim=-1)
+        attack_mask = (logit >= 0.5) & torch.isin(cls_idx, self.to_attack)
+        
+        if attack_mask.sum() == 0:
+            return torch.tensor(0.0, device=pred_scores.device)
+        
+        l,_ = torch.max(normal_confs[attack_mask], dim=-1)
+        
+        return l.mean()
+    
 
 
 class TotalVariation(nn.Module):
