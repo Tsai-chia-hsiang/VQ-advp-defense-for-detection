@@ -1,24 +1,32 @@
+from typing import Literal
 from pathlib import Path
 import gc
 import numpy as np
 import cv2
 import torch
 import torch.nn as nn
+from ultralytics import YOLO
 from ultralytics.utils import DEFAULT_CFG
+from ultralytics.data.build import InfiniteDataLoader,  build_yolo_dataset, build_dataloader
+from ultralytics.utils.torch_utils import select_device
 from ultralytics.utils.plotting import colors
 from ultralytics.data.utils import check_det_dataset
 from ultralytics.utils.checks import check_imgsz
 from ultralytics.utils import IterableSimpleNamespace
+from ultralytics.nn.tasks import DetectionModel
 from ultralytics.data.dataset import YOLODataset
 import sys
 import os.path as osp
 from .import _LOCAL_DIR_
 sys.path.append(osp.abspath(_LOCAL_DIR_.parent))
-from torchcvext.box import scale_box, xywh2xyxy, draw_boxes
+from torchcvext.box import scale_box, xywh2xyxy
+from torchcvext.draw import draw_boxes
 from torchcvext.convert import tensor2img
 
 def display_yolodataset_arguments(data_args:IterableSimpleNamespace, dataset_args:IterableSimpleNamespace) -> None:
-
+    """
+    For debug using
+    """
     print(f"Arguments for {YOLODataset}")
     print(f"-"*50)
     print(f"task:{data_args.task}, mode:{data_args.mode}")
@@ -63,6 +71,17 @@ def check_model_frozen(model:nn.Module):
         if v.requires_grad:
             print(f"detector {k} is not freeze yet, freeze it")
             v.requires_grad = False
+
+def setup_YOLOdetection_model(model:Path, imgsz:int=512, device:int|str|torch.device=0)->YOLO:
+    """
+    ### TODO multi-GPUs
+    """
+    M = YOLO(model=model)
+    dev = select_device(device=f"{device}", verbose=False) if not isinstance(device, torch.device) else device
+    M = M.to(device=dev) 
+    M.overrides['imgsz'] = imgsz
+    check_model_frozen(M.model)
+    return M
 
 def ultralytics_yolobatch_draw_boxes(batch, save_to:Path=None, return_img_lst:bool=False, need_scale=False) -> None|list[np.ndarray]:
     """
@@ -127,4 +146,23 @@ def ultralytics_yolobatch_det_draw_boxes(batch, preds:list[np.ndarray|torch.Tens
     gc.collect()
     if return_img:
         return ret
-        
+
+def get_dataloader(data_args:dict, dataset_args:dict, split:Literal['train', 'val'], rect=False) -> InfiniteDataLoader|None:
+    
+    if not dataset_args.get(split, False):
+        return None
+    
+    return build_dataloader(
+        dataset = build_yolo_dataset(
+            cfg=data_args,  
+            img_path=dataset_args.get(split), 
+            batch=data_args.batch, 
+            data=dataset_args, 
+            mode=data_args.mode, 
+            rect=rect,
+            stride = data_args.stride
+        ),
+        batch=data_args.batch, 
+        shuffle= split == 'train', 
+        workers=data_args.workers
+    )
