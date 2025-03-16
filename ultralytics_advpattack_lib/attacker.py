@@ -113,7 +113,7 @@ class PatchAttacker():
         
         return img
 
-    def attack_yolo_batch(self, batch, patch:torch.Tensor, patch_random_rotate:bool=False, patch_blur:bool=True, plot:bool=False) -> dict:
+    def attack_yolo_batch(self, batch, patch:torch.Tensor, patch_random_rotate:bool=False, patch_blur:bool=True, plot:bool=False, **kwargs) -> dict:
         """
         Apply the transformation in place at the batch level, 
         
