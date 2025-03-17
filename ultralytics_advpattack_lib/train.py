@@ -142,7 +142,8 @@ class AdvPatchAttack_YOLODetector_Trainer():
         )
         
         self.args_settting = {
-            'data':str(data), 
+            'data':str(data),
+            'imgsz': self.imgsz, 
             'batch':batch,
             'pretrained_weight':str(self.detector),
             'psize':psize, 'ptype':ptype,
