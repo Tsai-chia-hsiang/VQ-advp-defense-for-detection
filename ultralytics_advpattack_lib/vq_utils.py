@@ -1,10 +1,10 @@
 import sys
 import os
 from .import _LOCAL_DIR_
-sys.path += [os.path.abspath(_LOCAL_DIR_.parent/"maskgit")]
+sys.path += [os.path.abspath(_LOCAL_DIR_.parent/"MaskGIT")]
 import torch
 import jax.numpy as jnp
-from maskgit.maskgitlib.inference import ImageNet_class_conditional_generator
+from MaskGIT.maskgit.inference import ImageNet_class_conditional_generator
 from torch2jax import t2j, j2t
 
 MASKGIT_MODEL:ImageNet_class_conditional_generator = None

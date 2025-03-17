@@ -9,6 +9,6 @@ Attack methods:
     - reference code : [adversarial-yolo](https://gitlab.com/EAVISE/adversarial-yolo.git)
         - We do not simply run train_patch.py since it is primarily designed for YOLOv2 but not for V8. Instead, we integrate their patch appling method into [advattack/attack/PatchAttacker()](./advattack/attacker.py).
   
-    - |Detector|Attack dataset|Command|
-      |-|-|-|
-      |YOLOv8n, pretrained on COCO, conduct by Ultrayltics|INRIA Person|```sh genpatch/sargu_us.sh```|
+    - |Detector|Attack dataset|Command| Validation|
+      |-|-|-|-|
+      |YOLOv8n, pretrained on COCO, conduct by Ultrayltics|INRIA Person|sh scripts/advyolo.sh train|sh scripts/advyolo.sh val|
