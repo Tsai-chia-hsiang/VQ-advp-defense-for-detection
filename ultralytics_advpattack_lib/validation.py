@@ -18,7 +18,6 @@ from pathlib import Path
 sys.path.append(os.path.abspath(Path(__file__).parent))
 from torchcvext import tensor2img
 from tools import load_yaml
-from taming_transformers.ultray_do import ultralytics_batch_recons
 from .vq_utils import maskgit_reconstruct
 
 class AdvPatchAttack_YOLODetector_Validator(DetectionValidator):
