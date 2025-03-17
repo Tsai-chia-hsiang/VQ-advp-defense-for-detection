@@ -1,7 +1,6 @@
 from tqdm import tqdm
 import torch
 import gc
-from torch.nn import functional as F
 import sys
 import cv2
 import torch.nn as nn
@@ -10,17 +9,19 @@ from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 from typing import Literal, Any, Optional
 from pathlib import Path
-from ultralytics.utils import DEFAULT_CFG
 from ultralytics.utils.torch_utils import select_device, init_seeds, EarlyStopping
 from ultralytics import YOLO
-from ultralytics.data.build import InfiniteDataLoader,  build_yolo_dataset, build_dataloader
+from ultralytics.data.build import InfiniteDataLoader
 from ultralytics.nn.tasks import DetectionModel
-from .ultralytics_utils import check_model_frozen
-from .ultralytics_utils import get_data_args
+from .ultralytics_utils import ( 
+    get_data_args, 
+    get_dataloader,
+    setup_YOLOdetection_model
+)
 from .attacker import PatchAttacker, DEFAULT_ATTACKER_CFG_FILE
-from .loss import Supervised_V8Detection_MaxProb_Loss, V8Detection_MaxProb_Loss, TotalVariation, NPSCalculator, DEFAULT_PB_FILE
+from .loss import *
 from .writer import TrainingMetricsWriter
-from .validation import PatchAttack_DetValidator
+from .validation import AdvPatchAttack_YOLODetector_Validator
 from .ultralytics_utils import get_data_args
 from .import _LOCAL_DIR_
 import os.path as osp
@@ -79,10 +80,10 @@ class AdvTrain_EarlyStopping(EarlyStopping):
 class AdvPatchAttack_YOLODetector_Trainer():
 
     def __init__(
-        self, detector:Path, to_attack:Path, data:Path,
-        project:Path, name:str, loss_args:dict[str, Any]=None,
+        self, detector:Path, attack_cls:Path, data:Path,
+        save_dir:Path, loss_args:dict[str, Any]=None,
         device:str='0', batch:int=16, seed:int=891122, deterministic:bool=True, 
-        psize:int=300, ptype:str='random',
+        imgsz:int=512, psize:int=300, ptype:str='random',
         conf:float=0.25, attacker:Path=DEFAULT_ATTACKER_CFG_FILE, 
         sup_prob_loss:bool=False, logit_to_prob:bool=False,
         tensorboard:bool=True
@@ -97,24 +98,20 @@ class AdvPatchAttack_YOLODetector_Trainer():
         --
 
         """
-        self.pretrained_weight = detector
-        self.save_dir = refresh_dir(project/name)
-        self.to_attack = torch.tensor(load_yaml(to_attack)).to(dtype=torch.long)
+        
         init_seeds(seed=seed, deterministic=deterministic)
+
+        self.detector = detector
+        self.save_dir = refresh_dir(save_dir)
+        self.attack_cls = torch.tensor(load_yaml(attack_cls)).to(dtype=torch.long)
         self.device = select_device(device=f"{device}", verbose=False)
         self.batchsz = batch
-        self.model_args, self.model = self.setup_model()
+        self.imgsz = imgsz
+        self.conf=conf
+        self.data=data
 
-        self.data_args, self.dataset_args = get_data_args(
-            model_args=self.model_args, 
-            stride=max(int(self.model.stride.max()), 32),
-            dataset_cfgfile_path = data,
-            batch=self.batchsz,
-            mode='val'
-        )
-        self.trainloader = self.get_dataloader(split='train')
-        self.valloader = self.get_dataloader(split='val')
-
+        M = setup_YOLOdetection_model(model=self.detector, imgsz=self.imgsz, device=self.device)
+        
         self.attacker = PatchAttacker(**load_yaml(attacker))
         self.adv_patch = generate_patch(ptype=ptype, psize=psize, device=self.device)
         
@@ -122,13 +119,15 @@ class AdvPatchAttack_YOLODetector_Trainer():
         self.scheduler:LRScheduler = None
         self.method:str=None
 
+        
+        self.trainloader, self.valloader = self.get_train_val_loaders(model=M)
+        self.valloader = self.get_validator(model=M)
 
+        self.model:DetectionModel = M.model
         self.loss_dict:dict[str, Any] = {   
            **self._init_prob_loss(logit_to_prob=logit_to_prob, supervised=sup_prob_loss), 
             **self._init_other_loss(**(loss_args if loss_args is not None else {}))
         }
-
-        self.valloader = self.get_validator(conf=conf)
         
         self.epoch_metrics = {'mAP50':None, 'mAP50-95':None, 'fitness':None}
         self.consider = 'mAP50'
@@ -141,10 +140,11 @@ class AdvPatchAttack_YOLODetector_Trainer():
             file=self.save_dir/f"log.csv",
             tb_dir=self.save_dir if tensorboard else None
         )
+        
         self.args_settting = {
             'data':str(data), 
             'batch':batch,
-            'pretrained_weight':str(self.pretrained_weight),
+            'pretrained_weight':str(self.detector),
             'psize':psize, 'ptype':ptype,
             'seed':seed, 'deterministics':deterministic,
             'logit_to_prob':logit_to_prob, 
@@ -152,43 +152,47 @@ class AdvPatchAttack_YOLODetector_Trainer():
             'conf':conf
         }
     
-    def eval_clean(self) -> dict[str, float]|None:
-        if self.valloader is not None:
-            print(f"evaluating clean data ..")
-            M =  self.valloader(model=self.model)
-            print(M)
-            return M
-        return None
-    
-    def get_validator(self, conf:float=0.25)->PatchAttack_DetValidator|None:
-        
-        if self.valloader is not None:
-
-            validator = PatchAttack_DetValidator( 
-                attacker=self.attacker, 
-                save_dir=self.save_dir,
-                conf=conf, 
-                args=self.model_args|{
-                    'mode':'val','rect':False, 'batch':self.batchsz, 
-                    'data':self.dataset_args
-                }
-            ) 
-            validator.data = self.dataset_args
-            validator.args.plots = False
+    def get_train_val_loaders(self, model:YOLO) -> tuple[InfiniteDataLoader, InfiniteDataLoader|None]:
             
-            validator.dataloader = self.valloader
+        data_args, dataset_args = get_data_args(
+            model_args=model.overrides,
+            stride=max(int(model.model.stride.max()), 32),
+            dataset_cfgfile_path = self.data,
+            batch=self.batchsz,
+            mode='val'
+        )
 
-            return validator
+        return( 
+            get_dataloader(
+                data_args=data_args, 
+                dataset_args=dataset_args, 
+                split='train'
+            ), 
+            get_dataloader(
+                data_args=data_args, 
+                dataset_args=dataset_args,
+                split='val'
+            )
+        )   
+
+    def get_validator(self, model:YOLO)->AdvPatchAttack_YOLODetector_Validator|None:
         
-        return None
+        if self.valloader is not None:
+            return AdvPatchAttack_YOLODetector_Validator( 
+                detector=model, 
+                attacker=self.attacker, 
+                save_dir=self.save_dir, 
+                conf=self.conf, 
+                loader=self.valloader
+            ) 
 
     def _init_prob_loss(self, supervised=False, logit_to_prob:bool=False):
         return {
            'prob':V8Detection_MaxProb_Loss(
-               model=self.model, to_attack=self.to_attack
+               model=self.model, to_attack=self.attack_cls
             ) if not supervised 
             else Supervised_V8Detection_MaxProb_Loss(
-                model=self.model, to_attack=self.to_attack, 
+                model=self.model, to_attack=self.attack_cls, 
                 logit_to_prob=logit_to_prob
             )
         }
@@ -208,6 +212,21 @@ class AdvPatchAttack_YOLODetector_Trainer():
             'tv': self.loss_dict['tv'] (self.adv_patch),
             'nps': self.loss_dict['nps'](self.adv_patch)
         }
+      
+    def preprocess(self, batch, patch_random_rotate:bool=False, patch_blur:bool=False, debug:bool=False, **kwargs)-> dict[str, Any]:
+        
+        batch["img"] = batch["img"].to(self.device, non_blocking=True)
+        batch["img"] = batch["img"].float() / 255
+        
+        for k in ["batch_idx", "cls", "bboxes"]:
+            batch[k] = batch[k].to(self.device)
+        
+        return self.attacker.attack_yolo_batch(
+            patch=self.adv_patch, batch=batch,  
+            patch_random_rotate=patch_random_rotate,
+            patch_blur=patch_blur,
+            plot=debug
+        )
     
     def model_forward(self, batch):
         return self.model(batch['img'])
@@ -283,7 +302,15 @@ class AdvPatchAttack_YOLODetector_Trainer():
     
     def _agg_loss(self, tloss:dict[str, torch.Tensor], **kwargs)->torch.Tensor:
         return sum([v for _, v in tloss.items()])
-       
+    
+    def eval_clean(self) -> dict[str, float]|None:
+        if self.valloader is not None:
+            print(f"evaluating clean data ..")
+            M =  self.valloader(model=self.model)
+            print(M)
+            return M
+        return None 
+    
     def final_eval(self, preprocess_args:dict=None) -> dict[str, dict[str, float]]|None:
         
         to_test = self.save_dir/"worst.pt"
@@ -315,13 +342,6 @@ class AdvPatchAttack_YOLODetector_Trainer():
         #print(cmp)
         return cmp
 
-    def setup_model(self) -> tuple[dict, DetectionModel]:
-        model = YOLO(self.pretrained_weight)
-        model.train
-        model = model.to(device=self.device) #TODO: multi-GPUs training
-        check_model_frozen(model.model)
-        return model.overrides, model.model
-    
     def save_model(self, name:str, epoch:int):
     
         assert self.adv_patch.max() <= 1 and self.adv_patch.min() >= 0
@@ -333,40 +353,6 @@ class AdvPatchAttack_YOLODetector_Trainer():
         
         torch.save(to_save, self.save_dir/f"{name}.pt")
         cv2.imwrite(self.save_dir/f"{name}.png", tensor2img(self.adv_patch))
-    
-    def get_dataloader(self, split:Literal['train', 'val']) -> InfiniteDataLoader|None:
-    
-        if not self.dataset_args.get(split, False):
-            return None
-
-        return build_dataloader(
-            dataset = build_yolo_dataset(
-                cfg=self.data_args,  
-                img_path=self.dataset_args.get(split), 
-                batch=self.data_args.batch, 
-                data=self.dataset_args, 
-                mode=self.data_args.mode, 
-                stride = self.data_args.stride
-            ),
-            batch=self.data_args.batch, 
-            shuffle= split == 'train', 
-            workers=self.data_args.workers
-        )
-
-    def preprocess(self, batch, patch_random_rotate:bool=False, patch_blur:bool=False, debug:bool=False, **kwargs)-> dict[str, Any]:
-        
-        batch["img"] = batch["img"].to(self.device, non_blocking=True)
-        batch["img"] = batch["img"].float() / 255
-        
-        for k in ["batch_idx", "cls", "bboxes"]:
-            batch[k] = batch[k].to(self.device)
-        
-        return self.attacker.attack_yolo_batch(
-            patch=self.adv_patch, batch=batch,  
-            patch_random_rotate=patch_random_rotate,
-            patch_blur=patch_blur,
-            plot=debug
-        )
 
     def optimizer_step(self, lr:float=None)->None:
         match self.method:
