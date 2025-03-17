@@ -63,7 +63,7 @@ class AdvPatchAttack_YOLODetector_Validator(DetectionValidator):
             stride=max(int(reference_model.model.stride.max()), 32),
             batch=batch,
         )
-        print(dataset_args)
+        
         data_args.workers = 1
         assert 'val' in dataset_args
 
