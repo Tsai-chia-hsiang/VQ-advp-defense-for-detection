@@ -127,7 +127,7 @@ class AdvPatchAttack_YOLODetector_Validator(DetectionValidator):
         vq_attack_metrics = {k:None for k in clean_metrics}
 
         if adv_patch is not None:
-            print(f"attack image evaluation")
+            print(f"attacked image evaluation")
             attack_metrics = self(model=model, adv_patch=adv_patch, **kwargs)
         if vq:
             print(f"clean image with maskgit reconstruction")
