@@ -1,5 +1,5 @@
 {
-    "data": "datasets/INRIAPerson/runtime_inria.yaml",
+    "data": "datasets/INRIAPerson/inria.yaml",
     "metrics": {
         "precision": {
             "clean": 0.932701084398865,
