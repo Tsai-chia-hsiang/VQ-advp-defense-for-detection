@@ -113,7 +113,7 @@ def lazy_arg_parsers():
             potential_patch_path = cli_args.save_dir/f"last.pt"
         assert potential_patch_path.is_file()
         print(f"using {potential_patch_path} according `project` and `name` arguments to choose pretrained patch")
-        args.pretrained_patch = potential_patch_path
+        cli_args.pretrained_patch = potential_patch_path
 
 
     cli_args = args2dict(cli_args)
