@@ -8,7 +8,7 @@ from ultralytics import YOLO
 from ultralytics.utils import ops
 from ultralytics.engine.results import Results
 from .ultralytics_utils import get_data_args
-from .ultralytics_utils import ultralytics_yolobatch_draw_boxes, ultralytics_yolobatch_det_draw_boxes
+from .ultralytics_utils import ultralytics_yolobatch_det_draw_boxes
 from .attacker import DEFAULT_ATTACKER_CFG_FILE, PatchAttacker
 from ultralytics.data.build import build_yolo_dataset, build_dataloader
 from pathlib import Path
@@ -83,14 +83,15 @@ def compare_visualization(
             batch[k] = batch[k].to(model.device)
         
         clean_imgs = tensor2img(batch["img"])
+        clean_arr = batch["img"].detach().permute(0, 2, 3, 1).cpu().numpy()
         clean_preds = pred_once(model=model, batch=batch, conf=conf)
         
         clean_pred_imgs = ultralytics_yolobatch_det_draw_boxes(
             batch=batch, preds=clean_preds, labels=model.names, 
             need_scale=True, return_img=True, wanted_cls=[0]
         )
-        
         attack_batch = advp_attacker.attack_yolo_batch(batch=batch, patch=patch, plot=False, **pr_arg)
+        dirty_arr = attack_batch["img"].detach().permute(0, 2, 3, 1).cpu().numpy()
         dirty_img = tensor2img(attack_batch["img"])
         dirty_pred = pred_once(model=model, batch=attack_batch, conf=conf)
         
@@ -98,7 +99,11 @@ def compare_visualization(
             batch=batch, preds=dirty_pred, labels=model.names, 
             need_scale=True, return_img=True, wanted_cls=[0]
         )
-  
+        clean_arr_dir = save_dir/"clean_arr"
+        dirty_arr_dir = save_dir/"dirty_arr"
+        clean_arr_dir.mkdir(parents=True, exist_ok=True)
+        dirty_arr_dir.mkdir(parents=True, exist_ok=True)
+
         for idx, name in enumerate(batch["im_file"]):
     
             clean_pred_person = ((clean_preds[idx][:, -1].astype(np.int32)) == 0).astype(np.int32).sum()
@@ -109,6 +114,9 @@ def compare_visualization(
                 save_to=save_dir/Path(name).name, 
                 need_return=False
             )
+            np.save(clean_arr_dir/Path(name).stem, clean_arr[idx])
+            np.save(dirty_arr_dir/Path(name).stem, dirty_arr[idx])
+    
             if dirty_pred_person < clean_pred_person:
                 log['less'].append({
                     'name':str(Path(name).name),

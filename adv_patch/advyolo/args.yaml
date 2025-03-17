@@ -1,8 +1,9 @@
 batch: 16
 conf: 0.25
-data: INRIAPerson/inria.yaml
+data: datasets/INRIAPerson/runtime_inria.yaml
 deterministics: true
 epochs: 50
+imgsz: 512
 logit_to_prob: false
 lr: 0.03
 method: gd
