@@ -35,7 +35,7 @@ def validataion(validator_args, patch_transform_args, **kwargs):
     )
     print(json.dumps(metrics['mAP50'],indent=4))
     write_json(
-        {'data':str(validator_args['data']), 'metrics':metrics}, 
+        {'data':str(validator_args['origin_data']), 'metrics':metrics}, 
         validator.save_dir/"val_metrics.json"
     )
 
@@ -56,13 +56,13 @@ def lazy_arg_parsers():
         "trainer_args":[
             "detector", "data","attack_cls", "logit_to_prob", "conf",
             "save_dir", "psize", "ptype", "attacker", "batch", "device",
-            "sup_prob_loss", "imgsz",
+            "sup_prob_loss", "imgsz", "origin_data", 
             "seed", "deterministic", "tensorboard"
         ],
         "validator_args":[
             "detector", "pretrained_patch", "imgsz",
             "data","save_dir", "attacker", "batch", 
-            "seed", "deterministic", "device",
+            "seed", "deterministic", "device", "origin_data",
             "conf", "clean", "vq"
         ],
         "hyp":["lr", "epochs", "patience"]
@@ -102,6 +102,7 @@ def lazy_arg_parsers():
     parser.add_argument("--debug", action='store_true')
     cli_args = parser.parse_args()
     cli_args.save_dir = cli_args.project/cli_args.name
+    cli_args.origin_data = cli_args.data
     cli_args.data = runtime_datacfg(cli_args.data)
 
     print(f"create a runtime temp data cfg file: {cli_args.data}")
