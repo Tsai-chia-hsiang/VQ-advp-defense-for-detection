@@ -75,7 +75,7 @@ def lazy_arg_parsers():
     parser.add_argument("--logit_to_prob", action='store_true')
     parser.add_argument("--conf", type=float, default=0.5)
     parser.add_argument("--data", type=Path, default=Path("datasets")/"INRIAPerson"/"inria.yaml")
-    parser.add_argument("--project", type=Path, default=Path("adv_patch"))
+    parser.add_argument("--project", type=Path, default=Path("exps"))
     parser.add_argument("--name", type=str, default="advp_attack")
     parser.add_argument("--psize", type=int, default=300)
     parser.add_argument("--ptype", type=str,choices=['random', 'gray'], default='random')
