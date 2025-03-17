@@ -19,7 +19,7 @@ sys.path.append(os.path.abspath(Path(__file__).parent))
 from torchcvext import tensor2img
 from tools import load_yaml
 from taming_transformers.ultray_do import ultralytics_batch_recons
-
+from .vq_utils import maskgit_reconstruct
 
 class AdvPatchAttack_YOLODetector_Validator(DetectionValidator):
     
@@ -112,7 +112,7 @@ class AdvPatchAttack_YOLODetector_Validator(DetectionValidator):
                 plot=debug
             )
         if vq:
-            batch = ultralytics_batch_recons(batch=batch)
+            batch = maskgit_reconstruct(batch=batch)
         
         return batch
 
@@ -120,20 +120,25 @@ class AdvPatchAttack_YOLODetector_Validator(DetectionValidator):
         """
         Compare the result of clean data with data under adversarial patch attack using adv_patch.  
         """ 
-        
+        print(f"clean image evaluation")
         clean_metrics = self(model=model, adv_patch=None, **kwargs)
-        
+        clean_vq_metrics = {k:None for k in clean_metrics}
         attack_metrics = {k:None for k in clean_metrics}
         vq_attack_metrics = {k:None for k in clean_metrics}
 
         if adv_patch is not None:
+            print(f"attack image evaluation")
             attack_metrics = self(model=model, adv_patch=adv_patch, **kwargs)
         if vq:
+            print(f"clean image with maskgit reconstruction")
+            clean_vq_metrics = self(model=model, adv_patch=None, vq=vq, **kwargs)
+            print(f"attacked image with maskgit reconstruction")
             vq_attack_metrics = self(model=model, adv_patch=adv_patch, vq=vq, **kwargs)
         
         return {
             k:{
                 'clean':clean_metrics[k],
+                'clean_vq':clean_vq_metrics[k],
                 'attack':attack_metrics[k],
                 'vq_fix':vq_attack_metrics[k]
             }
