@@ -6,8 +6,4 @@
 debug
 !./adv_patch
 .vscode
-!./INRIAPerson/iniria.yaml
-!./INRIAPerson/readme.md
-!./INRIAPerson/*.py
-!./INRIAPerson/yolodata/readme.md
-INRIAPerson/
+
