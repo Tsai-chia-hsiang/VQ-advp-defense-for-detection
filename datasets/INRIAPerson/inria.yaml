@@ -1,4 +1,4 @@
-path: /home/tch/adversarial_defense/INRIAPerson/yolodata
+path: ./dataset/INRIAPerson/yolodata
 train: train
 val: val
 names:
