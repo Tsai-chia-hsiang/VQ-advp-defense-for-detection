@@ -23,13 +23,14 @@ def validataion(validator_args, patch_transform_args, **kwargs):
     patch = torch.load(validator_args['pretrained_patch'], map_location=model.device)['patch']
     clean_only = validator_args['clean']
     
-    del validator_args['detector'], validator_args['seed'], validator_args['pretrained_patch']
+    del validator_args['detector']
     
     validator = AdvPatchAttack_YOLODetector_Validator(detector=model, **validator_args)
     
     metrics = validator.comparsion(
         model=model.model,
         adv_patch=patch if not clean_only else None,
+        vq=validator_args['vq'],
         **patch_transform_args
     )
     print(json.dumps(metrics['mAP50'],indent=4))
@@ -51,7 +52,7 @@ def lazy_arg_parsers():
     parser.add_argument("--patch_path", type=Path)
 
     cfg_keys = {
-        "patch_transform_args":["patch_random_rotate", "patch_blur", "vq"],
+        "patch_transform_args":["patch_random_rotate", "patch_blur"],
         "trainer_args":[
             "detector", "data","attack_cls", "logit_to_prob", "conf",
             "save_dir", "psize", "ptype", "attacker", "batch", "device",
@@ -62,7 +63,7 @@ def lazy_arg_parsers():
             "detector", "pretrained_patch", "imgsz",
             "data","save_dir", "attacker", "batch", 
             "seed", "deterministic", "device",
-            "conf", "clean"
+            "conf", "clean", "vq"
         ],
         "hyp":["lr", "epochs", "patience"]
     }
