@@ -19,9 +19,31 @@ import sys
 import os.path as osp
 from .import _LOCAL_DIR_
 sys.path.append(osp.abspath(_LOCAL_DIR_.parent))
+from tools import load_yaml, write_yaml
 from torchcvext.box import scale_box, xywh2xyxy
 from torchcvext.draw import draw_boxes
 from torchcvext.convert import tensor2img
+
+def runtime_datacfg(data:Path) -> Path:  
+    """
+    This function is a workaround due to a flawed design (I think) in how Ultralytics handles relative dataset paths (ultralytics.data.utils.py).
+
+    ```
+    path = Path(extract_dir or data.get("path") or Path(data.get("yaml_file", "")).parent)  # dataset root
+    if not path.is_absolute():
+        path = (DATASETS_DIR / path).resolve()
+    ```
+    
+    In this case, the simple ./ using is not avaliable
+    
+    This function will load a yaml, modify the 'data' to absoluate path and save as temp file, and
+    return the temp file name for runtime using 
+    """
+    data_cfg = load_yaml(data)
+    data_cfg['path'] = str(Path(data_cfg['path']).absolute())
+    to_name = data.parent/f"runtime_{data.name}"
+    write_yaml(data_cfg, to_name)
+    return to_name
 
 def display_yolodataset_arguments(data_args:IterableSimpleNamespace, dataset_args:IterableSimpleNamespace) -> None:
     """

@@ -1,5 +1,8 @@
 import json
 import torch
+import os
+from absl import logging
+logging.set_verbosity(logging.ERROR)
 from ultralytics import YOLO
 from ultralytics_advpattack_lib.train import AdvPatchAttack_YOLODetector_Trainer
 from ultralytics_advpattack_lib.validation import AdvPatchAttack_YOLODetector_Validator
@@ -9,12 +12,12 @@ from tools import write_json, args2dict
 from ultralytics.utils.torch_utils import select_device, init_seeds
 from ultralytics_advpattack_lib.attacker import DEFAULT_ATTACKER_CFG_FILE
 from ultralytics_advpattack_lib.inference import compare_visualization
+from ultralytics_advpattack_lib.ultralytics_utils import runtime_datacfg
 
 def validataion(validator_args, patch_transform_args, **kwargs):
     
     init_seeds(validator_args['seed'], deterministic=True)
-    model = YOLO(validator_args['detector'])
-    model = model.to(device=select_device(f"{validator_args['device']}"))
+    model = YOLO(validator_args['detector']).to(device=select_device(validator_args['device'], verbose=False))
     patch = torch.load(validator_args['pretrained_patch'], map_location=model.device)['patch']
     clean_only = validator_args['clean']
     
@@ -48,7 +51,7 @@ def lazy_arg_parsers():
     cfg_keys = {
         "patch_transform_args":["patch_random_rotate", "patch_blur", "vq"],
         "trainer_args":[
-            "detector", "data","to_attack", "logit_to_prob", "conf",
+            "detector", "data","attack_cls", "logit_to_prob", "conf",
             "save_dir", "psize", "ptype", "attacker", "batch", "device",
             "sup_prob_loss", "imgsz",
             "seed", "deterministic", "tensorboard"
@@ -68,7 +71,7 @@ def lazy_arg_parsers():
     parser.add_argument("--sup_prob_loss", action='store_true')
     parser.add_argument("--logit_to_prob", action='store_true')
     parser.add_argument("--conf", type=float, default=0.5)
-    parser.add_argument("--data", type=Path, default=Path("INRIAPerson")/"inria.yaml")
+    parser.add_argument("--data", type=Path, default=Path("dataset")/"INRIAPerson"/"inria.yaml")
     parser.add_argument("--project", type=Path, default=Path("adv_patch"))
     parser.add_argument("--name", type=str, default="advp_attack")
     parser.add_argument("--psize", type=int, default=300)
@@ -82,7 +85,7 @@ def lazy_arg_parsers():
     parser.add_argument("--pretrained_patch", type=Path)
     parser.add_argument("--patch_random_rotate", action='store_true')
     parser.add_argument("--patch_blur", action='store_true')
-    parser.add_argument("--to_attack", type=Path, default=Path("attack_cls.yaml"))
+    parser.add_argument("--attack_cls", type=Path, default=Path("attack_cls.yaml"))
     parser.add_argument("--clean", action='store_true')
     parser.add_argument("--vq", action='store_true')
     
@@ -96,6 +99,10 @@ def lazy_arg_parsers():
     parser.add_argument("--debug", action='store_true')
     cli_args = parser.parse_args()
     cli_args.save_dir = cli_args.project/cli_args.name
+    cli_args.data = runtime_datacfg(cli_args.data)
+
+    print(f"create a runtime temp data cfg file: {cli_args.data}")
+
     del cli_args.project, cli_args.name
 
     if cli_args.pretrained_patch is None and cli_args.task != 'train':
@@ -116,7 +123,7 @@ def lazy_arg_parsers():
         # trainer directly takes hierarchical dict
         args = {**(args['validator_args']), **(args['patch_transform_args'])}
         
-    return task, args
+    return task, args, cli_args
 
 
 task_map = {
@@ -126,8 +133,10 @@ task_map = {
 }
 
 def main():
-    task, args = lazy_arg_parsers()
+    task, args, cli_args = lazy_arg_parsers()
     task_map[task](**args)
+    print(f"removing runtime created temp data cfg file : {cli_args['data']}")
+    os.remove(cli_args['data'])
 
 if __name__ == "__main__":
     main()
