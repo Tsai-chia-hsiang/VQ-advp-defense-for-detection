@@ -1,8 +1,10 @@
+import warnings
+import logging
+logging.basicConfig(level=logging.ERROR)
+warnings.simplefilter("ignore")
+import os
 import json
 import torch
-import os
-from absl import logging
-logging.set_verbosity(logging.ERROR)
 from ultralytics import YOLO
 from ultralytics_advpattack_lib.train import AdvPatchAttack_YOLODetector_Trainer
 from ultralytics_advpattack_lib.validation import AdvPatchAttack_YOLODetector_Validator
@@ -30,7 +32,7 @@ def validataion(validator_args, patch_transform_args, **kwargs):
         adv_patch=patch if not clean_only else None,
         **patch_transform_args
     )
-    print(json.dumps(metrics,indent=4))
+    print(json.dumps(metrics['mAP50'],indent=4))
     write_json(
         {'data':str(validator_args['data']), 'metrics':metrics}, 
         validator.save_dir/"val_metrics.json"
@@ -71,7 +73,7 @@ def lazy_arg_parsers():
     parser.add_argument("--sup_prob_loss", action='store_true')
     parser.add_argument("--logit_to_prob", action='store_true')
     parser.add_argument("--conf", type=float, default=0.5)
-    parser.add_argument("--data", type=Path, default=Path("dataset")/"INRIAPerson"/"inria.yaml")
+    parser.add_argument("--data", type=Path, default=Path("datasets")/"INRIAPerson"/"inria.yaml")
     parser.add_argument("--project", type=Path, default=Path("adv_patch"))
     parser.add_argument("--name", type=str, default="advp_attack")
     parser.add_argument("--psize", type=int, default=300)
