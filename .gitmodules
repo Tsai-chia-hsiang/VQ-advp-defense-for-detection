@@ -1,4 +1,0 @@
-[submodule "torchcvext"]
-	path = torchcvext
-	url = https://github.com/Tsai-chia-hsiang/torchcvext.git
-	branch = main
