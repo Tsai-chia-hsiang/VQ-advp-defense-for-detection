@@ -16,7 +16,7 @@ import sys
 import os
 from pathlib import Path
 sys.path.append(os.path.abspath(Path(__file__).parent))
-from torchcvext import tensor2img
+from deepcvext import tensor2img
 from tools import load_yaml
 from .vq_utils import maskgit_reconstruct
 

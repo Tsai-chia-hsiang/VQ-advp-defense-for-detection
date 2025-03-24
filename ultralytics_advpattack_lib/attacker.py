@@ -8,7 +8,7 @@ from .ultralytics_utils import ultralytics_yolobatch_draw_boxes
 from .augment import MedianPool2d
 from .import _LOCAL_DIR_, _CFG_DIR_
 sys.path.append(osp.abspath(_LOCAL_DIR_.parent))
-from torchcvext.box import scale_box, box_geo_scale
+from deepcvext.box import scale_box, box_geo_scale
 
 DEFAULT_ATTACKER_CFG_FILE = _CFG_DIR_/"attacker.yaml"
 

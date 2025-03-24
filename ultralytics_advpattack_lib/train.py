@@ -27,7 +27,7 @@ from .import _LOCAL_DIR_
 import os.path as osp
 
 sys.path.append(osp.abspath(_LOCAL_DIR_.parent))
-from torchcvext.convert import tensor2img
+from deepcvext.convert import tensor2img
 from tools import write_json, refresh_dir, load_yaml, write_yaml
 
 def generate_patch(ptype:Literal['gray', 'random']="gray", psize:int=300, device:torch.device = torch.device("cpu")) -> nn.Parameter:
@@ -190,7 +190,7 @@ class AdvPatchAttack_YOLODetector_Trainer():
     def _init_prob_loss(self, supervised=False, logit_to_prob:bool=False):
         return {
            'prob':V8Detection_MaxProb_Loss(
-               model=self.model, to_attack=self.attack_cls
+               model=self.model, to_attack=self.attack_cls, conf=self.conf
             ) if not supervised 
             else Supervised_V8Detection_MaxProb_Loss(
                 model=self.model, to_attack=self.attack_cls, 
