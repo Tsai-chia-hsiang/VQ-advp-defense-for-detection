@@ -20,9 +20,9 @@ import os.path as osp
 from .import _LOCAL_DIR_
 sys.path.append(osp.abspath(_LOCAL_DIR_.parent))
 from tools import load_yaml, write_yaml
-from torchcvext.box import scale_box, xywh2xyxy
-from torchcvext.draw import draw_boxes
-from torchcvext.convert import tensor2img
+from deepcvext.box import scale_box, xywh2xyxy
+from deepcvext.draw import draw_boxes
+from deepcvext.convert import tensor2img
 
 def runtime_datacfg(data:Path) -> Path:  
     """
