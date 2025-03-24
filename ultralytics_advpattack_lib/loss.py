@@ -90,14 +90,15 @@ class Supervised_V8Detection_MaxProb_Loss(v8DetectionLoss):
 
 class V8Detection_MaxProb_Loss(nn.Module):
 
-    def __init__(self, model:DetectionModel, to_attack:torch.Tensor, *args, **kwargs):
+    def __init__(self, model:DetectionModel, to_attack:torch.Tensor, conf:float=0.25, *args, **kwargs):
         super().__init__(*args, **kwargs)
         m =  model.model[-1]
         self.reg_max = m.reg_max
         self.nc = m.nc
         self.no = m.nc + m.reg_max * 4
         self.to_attack = to_attack.clone().detach()
-
+        self.conf = conf
+    
     def forward(self, preds, **kwargs) -> dict[str, torch.Tensor]:
         
         feats = preds[1] if isinstance(preds, tuple) else preds
@@ -112,7 +113,7 @@ class V8Detection_MaxProb_Loss(nn.Module):
         pred_scores = pred_scores.permute(0, 2, 1).contiguous()
         normal_confs = pred_scores.sigmoid()
         logit, cls_idx = normal_confs.max(dim=-1)
-        attack_mask = (logit >= 0.5) & torch.isin(cls_idx, self.to_attack)
+        attack_mask = (logit >= self.conf) & torch.isin(cls_idx, self.to_attack)
         
         if attack_mask.sum() == 0:
             return torch.tensor(0.0, device=pred_scores.device)
