@@ -1,3 +1,7 @@
+import os
+os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
+os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
+os.environ["XLA_FLAGS"] = "--xla_gpu_deterministic_ops"
 import warnings
 import logging
 logging.basicConfig(level=logging.ERROR)
@@ -5,6 +9,8 @@ warnings.simplefilter("ignore")
 import os
 import json
 import torch
+import jax
+rng = jax.random.PRNGKey(0)
 from ultralytics import YOLO
 from ultralytics_advpattack_lib.train import AdvPatchAttack_YOLODetector_Trainer
 from ultralytics_advpattack_lib.validation import AdvPatchAttack_YOLODetector_Validator
@@ -44,6 +50,9 @@ def train_advpatch(trainer_args, patch_transform_args, hyp, **kwargs):
     train_result = advpatch_trainer.train(**hyp, preprocess_args=patch_transform_args)
     print(json.dumps(train_result, indent=4))
 
+def inference(infer_args, patch_transform_args, **kwargs):
+    compare_visualization(**infer_args, **patch_transform_args)
+
 def lazy_arg_parsers():
     
     parser = ArgumentParser()
@@ -67,6 +76,7 @@ def lazy_arg_parsers():
         ],
         "hyp":["lr", "epochs", "patience"]
     }
+    cfg_keys['infer_args'] = cfg_keys['validator_args'].copy()
     
     
     parser.add_argument("--detector", type=Path, default=Path("pretrained")/"yolov8n.pt")
@@ -117,27 +127,23 @@ def lazy_arg_parsers():
         print(f"using {potential_patch_path} according `project` and `name` arguments to choose pretrained patch")
         cli_args.pretrained_patch = potential_patch_path
 
-
     cli_args = args2dict(cli_args)
+    
     task = cli_args['task']
     args = {k: {j:cli_args[j] for j in v} for k,v in cfg_keys.items() }
     
-    if task in ['infer']:
-        # TODO: refactoring validator so that it can be like 
-        # trainer directly takes hierarchical dict
-        args = {**(args['validator_args']), **(args['patch_transform_args'])}
-        
     return task, args, cli_args
 
 
 task_map = {
     'train':train_advpatch,
     'val':validataion,
-    'infer':compare_visualization
+    'infer':inference
 }
 
 def main():
     task, args, cli_args = lazy_arg_parsers()
+    print(args)
     task_map[task](**args)
     print(f"removing runtime created temp data cfg file : {cli_args['data']}")
     os.remove(cli_args['data'])
