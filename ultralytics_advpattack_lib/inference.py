@@ -19,6 +19,7 @@ sys.path.append(osp.abspath(_LOCAL_DIR_.parent))
 from tools import load_yaml, write_json
 from deepcvext.draw import canvas
 from deepcvext import tensor2img
+import gc
 
 def make_img_np_dir(root:Path)->tuple[Path, Path]:
     arr = root/"arr"
@@ -149,4 +150,38 @@ def compare_visualization(
     
     write_json(log, save_dir/f"cmp_person.json")
         
-    
+
+def attack(
+    detector:Path, pretrained_patch:Path, save_dir:Path,
+    data:Path, attacker:Path=DEFAULT_ATTACKER_CFG_FILE, 
+    batch:int=16, device:str='0',conf:float=0.25,
+    seed:int=89112, deterministic:bool=True, imgsz:int=512,
+    **pr_arg
+)->None:   
+        init_seeds(seed=seed, deterministic=deterministic)
+        patch = torch.load(pretrained_patch, weights_only=False, map_location='cpu')['patch'].to(device=model.device)
+        advp_attacker = PatchAttacker(**load_yaml(attacker))
+        model = YOLO(detector)
+        data_args, dataset_args = get_data_args(
+            model_args={**(model.overrides),**{'imgsz':imgsz}}, 
+            stride=max(int(model.model.stride.max()), 32),
+            dataset_cfgfile_path = data,
+            batch=batch,
+            mode='val'
+        )
+        del model
+        gc.collect()
+
+        loader = build_dataloader(
+            dataset = build_yolo_dataset(
+                cfg = data_args,
+                img_path=dataset_args.get('val'),
+                batch=data_args.batch, 
+                data=dataset_args, 
+                mode=data_args.mode, 
+                stride = data_args.stride,
+                rect=False
+            ),
+            batch=data_args.batch, shuffle=False, 
+            workers=1
+        )

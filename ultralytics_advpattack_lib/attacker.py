@@ -104,16 +104,19 @@ class PatchAttacker():
         patch = self.patch_affine_transformation(patch=patch, xywh=bboxes, angle=angle, scale=geo_scale)
 
         # for each img, attacking it independently
+        masks = torch.zeros_like(img).to(torch.int32)
         for i in range(img.size(0)):
             bidx = torch.where(batch_idx == i)[0]
             using_patch = patch[bidx]
             # each slice of the patch is for a bbox
             for obj_adv_patch in using_patch:
-                img[i] = torch.where((obj_adv_patch == 0), img[i], obj_adv_patch)
-        
-        return img
+                mask_location = (obj_adv_patch == 0)
+                img[i] = torch.where(mask_location, img[i], obj_adv_patch)
+                masks[i] = torch.where(mask_location, 0, 1)
 
-    def attack_yolo_batch(self, batch, patch:torch.Tensor, patch_random_rotate:bool=False, patch_blur:bool=True, plot:bool=False, **kwargs) -> dict:
+        return img, masks
+
+    def attack_yolo_batch(self, batch, patch:torch.Tensor, patch_random_rotate:bool=False, patch_blur:bool=True, plot:bool=False, mask:bool=True,**kwargs) -> dict:
         """
         Apply the transformation in place at the batch level, 
         
@@ -126,11 +129,11 @@ class PatchAttacker():
             - ultrayltics YOLODataset batch 
         - patch: torch Tensor
             - the patch for adversarial attacking 
-        - attaker: PatchAttacker
-            - a PatchAttacker
         - random_rotation_patch: bool, default False
             - Wether to apply random ratation
                 - For attacker's argument
+        - mask: bool, default True
+            - Wether return masks of attacked location 
         - plot: bool, defualt False
             - Wether plotting the results of images under attack..
                 - It will auto save (using cv2) the images to ${workdir}/view/
@@ -138,16 +141,19 @@ class PatchAttacker():
 
         Return
         --
-        batch, whos value of "imgs" is the attacked version of origin "img"
+        batch, whos value of "img" is the attacked version of origin "img"
         """
         
-        batch["img"] = self(
+        batch["img"], masks = self(
             patch = patch, img=batch["img"],  
             bboxes=batch['bboxes'], 
             batch_idx=batch['batch_idx'], 
             patch_random_rotate=patch_random_rotate,
             patch_blur=patch_blur
         )
+        if mask:
+            batch['advp_mask'] = masks
+
         if plot:
             # visaulization debug
             ultralytics_yolobatch_draw_boxes(batch=batch, save_to=Path("view"), need_scale=True) 
