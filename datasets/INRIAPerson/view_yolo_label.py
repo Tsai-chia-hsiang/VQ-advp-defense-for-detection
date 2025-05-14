@@ -4,8 +4,8 @@ from pathlib import Path
 import os
 _FP_ = Path(__file__).parent
 sys.path.append(os.path.abspath(_FP_.parent))
-from torchcvext.box import scale_box, draw_boxes, xywh2xyxy, xyxy2int
-
+from deepcvext.box import scale_box, xywh2xyxy, xyxy2int
+from deepcvext.draw import draw_boxes
 if __name__ == "__main__":
 
     dataset = sys.argv[1].lower()
