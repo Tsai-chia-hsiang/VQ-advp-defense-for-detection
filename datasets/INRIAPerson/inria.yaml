@@ -1,4 +1,4 @@
-path: ./datasets/INRIAPerson/yolodata
+path: /datasets/INRIAPerson
 train: train
 val: val
 names:
