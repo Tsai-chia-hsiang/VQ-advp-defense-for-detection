@@ -42,7 +42,8 @@ def runtime_datacfg(data:Path) -> Path:
     data_cfg = load_yaml(data)
     data_cfg['path'] = str(Path(data_cfg['path']).absolute())
     to_name = data.parent/f"runtime_{data.name}"
-    write_yaml(data_cfg, to_name)
+    if not to_name.is_file():
+        write_yaml(data_cfg, to_name)
     return to_name
 
 def display_yolodataset_arguments(data_args:IterableSimpleNamespace, dataset_args:IterableSimpleNamespace) -> None:
@@ -76,7 +77,11 @@ def get_data_args(model_args:dict, stride:int, dataset_cfgfile_path:Path, mode:s
             'mask_ratio', 'overlap_mask','bgr', 'batch', 'workers'
         ]
     }
-    args = model_args|default_data_args|{'mode':mode, 'data':dataset_cfgfile_path}
+    args = {
+        **model_args, 
+        **default_data_args, 
+        **{'mode':mode, 'data':dataset_cfgfile_path}
+    }
     
     for k in kwargs:
         args[k] = kwargs[k]
@@ -93,7 +98,8 @@ def check_model_frozen(model:nn.Module):
         if v.requires_grad:
             print(f"detector {k} is not freeze yet, freeze it")
             v.requires_grad = False
-
+    model.eval()
+    
 def setup_YOLOdetection_model(model:Path, imgsz:int=512, device:int|str|torch.device=0)->YOLO:
     """
     ### TODO multi-GPUs
