@@ -9,6 +9,7 @@ infer_args:
 - device
 - save_dir
 - data
+- attacker
 patch_transform_args:
 - patch_random_rotate
 - patch_blur
