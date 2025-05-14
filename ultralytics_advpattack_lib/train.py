@@ -83,10 +83,11 @@ class AdvPatchAttack_YOLODetector_Trainer():
         self, detector:Path, attack_cls:Path, data:Path,
         save_dir:Path, loss_args:dict[str, Any]=None,
         device:str='0', batch:int=16, seed:int=891122, deterministic:bool=True, 
-        imgsz:int=512, psize:int=300, ptype:str='random',
+        imgsz:int=640, psize:int=300, ptype:str='random',
         conf:float=0.25, attacker:Path=DEFAULT_ATTACKER_CFG_FILE, 
-        sup_prob_loss:bool=False, logit_to_prob:bool=False,
-        tensorboard:bool=True
+        objective:Literal['cls', 'obj', 'obj-cls']='obj-cls',
+        sup_prob_loss:bool=False, tensorboard:bool=True,
+        **kwargs
     ):
         """
         To much different from BaseTrainer of Ultralytics, Re-design it.
@@ -109,6 +110,7 @@ class AdvPatchAttack_YOLODetector_Trainer():
         self.imgsz = imgsz
         self.conf=conf
         self.data=data
+        self.objective = objective
 
         M = setup_YOLOdetection_model(model=self.detector, imgsz=self.imgsz, device=self.device)
         
@@ -125,7 +127,7 @@ class AdvPatchAttack_YOLODetector_Trainer():
 
         self.model:DetectionModel = M.model
         self.loss_dict:dict[str, Any] = {   
-           **self._init_prob_loss(logit_to_prob=logit_to_prob, supervised=sup_prob_loss), 
+           **self._init_prob_loss(supervised=sup_prob_loss), 
             **self._init_other_loss(**(loss_args if loss_args is not None else {}))
         }
         
@@ -145,10 +147,10 @@ class AdvPatchAttack_YOLODetector_Trainer():
             'data':str(data),
             'imgsz': self.imgsz, 
             'batch':batch,
+            'objective':self.objective,
             'pretrained_weight':str(self.detector),
             'psize':psize, 'ptype':ptype,
             'seed':seed, 'deterministics':deterministic,
-            'logit_to_prob':logit_to_prob, 
             'prob_supervised':sup_prob_loss,
             'conf':conf
         }
@@ -180,23 +182,18 @@ class AdvPatchAttack_YOLODetector_Trainer():
         
         if self.valloader is not None:
             return AdvPatchAttack_YOLODetector_Validator( 
-                detector=model, 
+                reference_model=model, 
                 attacker=self.attacker, 
                 save_dir=self.save_dir, 
                 conf=self.conf, 
-                loader=self.valloader
+                data=self.data,
+                loader=self.valloader,
+                rect=False
             ) 
 
-    def _init_prob_loss(self, supervised=False, logit_to_prob:bool=False):
-        return {
-           'prob':V8Detection_MaxProb_Loss(
-               model=self.model, to_attack=self.attack_cls, conf=self.conf
-            ) if not supervised 
-            else Supervised_V8Detection_MaxProb_Loss(
-                model=self.model, to_attack=self.attack_cls, 
-                logit_to_prob=logit_to_prob
-            )
-        }
+    def _init_prob_loss(self, supervised=False)->V8Detection_MaxProb_Loss|Supervised_V8Detection_MaxProb_Loss:
+        L = V8Detection_MaxProb_Loss if not supervised else Supervised_V8Detection_MaxProb_Loss
+        return {'prob':L(model=self.model, to_attack=self.attack_cls, conf=self.conf)}
            
     def _init_other_loss(self, w_tv:float=2.5, printability_file=DEFAULT_PB_FILE, **kwargs):
         return { 
@@ -205,9 +202,18 @@ class AdvPatchAttack_YOLODetector_Trainer():
         }
 
     def cal_prob_loss(self, preds, batch)->dict[str, torch.Tensor]:
-        return {'prob':self.loss_dict['prob'](preds=preds, batch=batch)}
-
-    def cal_other_loss(self, preds, batch)->dict[str, torch.Tensor]:
+        l:torch.Tensor = self.loss_dict['prob'](preds=preds, batch=batch)
+        if l.numel() > 1:
+            match self.objective:
+                case 'cls': 
+                    l = l[0]
+                case 'obj':
+                    l = l[[1, 2]].sum()
+                case 'obj-cls':
+                    l = l.sum()
+        return {'prob': l}
+    
+    def cal_other_loss(self, **kwargs)->dict[str, torch.Tensor]:
         
         return {
             'tv': self.loss_dict['tv'] (self.adv_patch),
@@ -237,7 +243,7 @@ class AdvPatchAttack_YOLODetector_Trainer():
         pr_args = preprocess_args if preprocess_args is not None else {}
         self.method = method
         print(f"write training args to {self.save_dir/'args.yaml'}")
-        write_yaml({**self.args_settting, **pr_args, **{'lr':lr, 'epochs':epochs,'method':method}}, self.save_dir/f"args.yaml")
+        write_yaml({**self.args_settting, **pr_args, **{'lr':lr, 'epochs':epochs,'method':method}}, self.save_dir/f"train_args.yaml")
         
         self.stoper = AdvTrain_EarlyStopping(patience=patience, current_worst=self.clean_metrcis[self.consider])
         
