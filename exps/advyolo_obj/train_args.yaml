@@ -1,0 +1,16 @@
+batch: 16
+conf: 0.25
+data: datasets/INRIAPerson/runtime_inria.yaml
+deterministics: true
+epochs: 40
+imgsz: 640
+lr: 0.01
+method: gd
+objective: obj
+patch_blur: true
+patch_random_rotate: true
+pretrained_weight: pretrained/yolov8n.pt
+prob_supervised: true
+psize: 300
+ptype: random
+seed: 891122

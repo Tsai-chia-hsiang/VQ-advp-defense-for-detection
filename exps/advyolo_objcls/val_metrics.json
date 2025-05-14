@@ -1,0 +1,35 @@
+{
+    "data": "datasets/INRIAPerson/inria.yaml",
+    "metrics": {
+        "precision": {
+            "clean": 0.9327927196709828,
+            "clean_defense": null,
+            "attack": 0.6353077308242764,
+            "attack_defense": null
+        },
+        "recall": {
+            "clean": 0.9134125636672326,
+            "clean_defense": null,
+            "attack": 0.8064516129032258,
+            "attack_defense": null
+        },
+        "mAP50": {
+            "clean": 0.9648443699352138,
+            "clean_defense": null,
+            "attack": 0.7467967066692672,
+            "attack_defense": null
+        },
+        "mAP50-95": {
+            "clean": 0.6869856689451559,
+            "clean_defense": null,
+            "attack": 0.44482206648629735,
+            "attack_defense": null
+        },
+        "fitness": {
+            "clean": 0.7147715390441617,
+            "clean_defense": null,
+            "attack": 0.47501953050459433,
+            "attack_defense": null
+        }
+    }
+}
