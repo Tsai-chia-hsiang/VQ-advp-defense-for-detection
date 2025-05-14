@@ -18,60 +18,42 @@ from pathlib import Path
 sys.path.append(os.path.abspath(Path(__file__).parent))
 from deepcvext import tensor2img
 from tools import load_yaml
-from .vq_utils import maskgit_reconstruct
 
 class AdvPatchAttack_YOLODetector_Validator(DetectionValidator):
     
     def __init__(
-        self, detector:Path|YOLO, save_dir:Path,
+        self, reference_model:YOLO, save_dir:Path,
         data:Optional[Path]=None, loader:Optional[InfiniteDataLoader]=None,
-        conf:float=0.25,
-        attacker:Path|PatchAttacker=DEFAULT_ATTACKER_CFG_FILE, 
-        imgsz:int=512, batchsz:int=16, 
-        pbar=None, _callbacks=None, **kwargs
+        conf:float=0.25, attacker:Path|PatchAttacker=DEFAULT_ATTACKER_CFG_FILE, 
+        imgsz:int=640, batch:int=16, **kwargs
     ):
         assert any([data, loader])
-        if loader is None:
-            assert detector is not None, "no loader, need `data` to build loader"
-        
-        reference_model=YOLO(detector) if isinstance(detector, Path) else detector
-        
-        loader = AdvPatchAttack_YOLODetector_Validator.get_dataloader_according_YOLO(
-            reference_model,
-            dataset_cfgfile_path=data, 
-            imgsz=imgsz, batch=batchsz
-        ) if loader is None else loader
- 
-        args = {
-            **(reference_model.overrides),
-            **{'mode':'val', 'imgsz':loader.dataset.imgsz,'rect':loader.dataset.rect, 'batch':loader.batch_size}
-        }
-        save_dir.mkdir(parents=True, exist_ok=True)
-        super().__init__(dataloader=loader, save_dir=save_dir, pbar=pbar, args=args, _callbacks=_callbacks)
-        self.args.plots = False
-        self.data = self.dataloader.dataset.data
-        self.attacker = PatchAttacker(**load_yaml(attacker)) if isinstance(attacker, Path) else attacker
-        self.training = False
-        self.args.conf = conf
-    
-    @staticmethod
-    def get_dataloader_according_YOLO(reference_model:YOLO, dataset_cfgfile_path:Path, imgsz:int=512, batch:int=16)->InfiniteDataLoader:
         data_args, dataset_args = get_data_args(
-            model_args={**(reference_model.overrides),**{'imgsz':imgsz}}, 
-            dataset_cfgfile_path=dataset_cfgfile_path,
+            model_args={**reference_model.overrides,**{'imgsz':imgsz}}, 
+            dataset_cfgfile_path=data,
             stride=max(int(reference_model.model.stride.max()), 32),
-            batch=batch,
+            batch=batch
         )
+        if loader is None:
+            loader = get_dataloader(
+                data_args=data_args, dataset_args=dataset_args, split='val',
+                rect=True
+            )
+            
+        args = {
+            **reference_model.overrides,
+            'mode':'val', 'rect':kwargs.get('rect', True), 'batch':batch, 'data':data,
+            'plots':False, 'conf':conf
+        }
         
-        data_args.workers = 1
-        assert 'val' in dataset_args
-
-        return get_dataloader(data_args=data_args, dataset_args=dataset_args, split='val')
-  
-    def init_metrics(self, model:nn.Module):
-        self.device = next(model.parameters()).device
-        return super().init_metrics(model)
-    
+        save_dir.mkdir(parents=True, exist_ok=True)
+        
+        super().__init__(args=args, save_dir=save_dir, dataloader=loader)# , dataloader=loader, save_dir=save_dir, pbar=pbar, _callbacks=_callbacks)
+        self.data = dataset_args
+        self.training = False
+        self.attacker = PatchAttacker(**load_yaml(attacker)) if isinstance(attacker, Path) else attacker
+   
+    """
     def _save_img(self, batch)->None:
         imgs = tensor2img(batch["img"])
         array = batch["img"].detach().permute(0, 2, 3, 1).cpu().numpy()
@@ -82,27 +64,31 @@ class AdvPatchAttack_YOLODetector_Validator(DetectionValidator):
         for im, a, name in zip(imgs, array, batch['im_file']):
             cv2.imwrite(self.save_dir/"img"/Path(name).name, im)
             np.save(self.save_dir/"img"/Path(name).name)
-        
-    def __call__(self, model:DetectionModel, adv_patch:Optional[torch.Tensor]=None, **pr_args):
-                
-        self.init_metrics(de_parallel(model))
+    """
+    
+    @torch.no_grad()
+    def __call__(self, model:DetectionModel, adv_patch:Optional[torch.Tensor]=None, defenser=None, **pr_args):
+      
+        def setup():
+            dp = de_parallel(model)
+            self.device = next(dp.parameters()).device
+            self.init_metrics(dp)
+        setup()
+
         for batch in tqdm(self.dataloader):
-            batch = self.preprocess(batch=batch, adv_patch=adv_patch, **pr_args)
+            batch = self.preprocess(batch=batch, adv_patch=adv_patch, defenser=defenser, **pr_args)
             preds = model(batch["img"])
             preds = self.postprocess(preds)
             self.update_metrics(preds, batch)
-            
+
         stats = self.get_stats()
         self.check_stats(stats)
         self.finalize_metrics()
-        if not self.training:
-            self.args.verbose=True
-            self.print_results()
         stats = {k.replace("metrics/","").replace("(B)", ""):float(v) for k,v in stats.items()}
         
         return stats
-    
-    def preprocess(self, batch:dict[str, Any], adv_patch:torch.Tensor=None, patch_random_rotate:bool=False, patch_blur:bool=False, debug:bool=False, vq:bool=False, **kwargs):
+ 
+    def preprocess(self, batch:dict[str, Any], adv_patch:torch.Tensor=None, patch_random_rotate:bool=False, patch_blur:bool=False, debug:bool=False, defenser=None, **kwargs):
         batch = super().preprocess(batch)
         if adv_patch is not None:
             batch = self.attacker.attack_yolo_batch(
@@ -110,36 +96,37 @@ class AdvPatchAttack_YOLODetector_Validator(DetectionValidator):
                 patch_random_rotate=patch_random_rotate, patch_blur=patch_blur, 
                 plot=debug
             )
-        if vq:
-            batch = maskgit_reconstruct(batch=batch)
+        if defenser is not None:
+            batch = defenser(batch=batch)
         
         return batch
-
-    def comparsion(self, model:DetectionModel, adv_patch:torch.Tensor, vq:bool=False, **kwargs) -> dict[str, dict[str, float]]:
+    
+    
+    def comparsion(self, model:DetectionModel, adv_patch:torch.Tensor, defenser=None, **kwargs) -> dict[str, dict[str, float]]:
         """
         Compare the result of clean data with data under adversarial patch attack using adv_patch.  
         """ 
         print(f"clean image evaluation")
         clean_metrics = self(model=model, adv_patch=None, **kwargs)
-        clean_vq_metrics = {k:None for k in clean_metrics}
+        clean_defense_metrics = {k:None for k in clean_metrics}
         attack_metrics = {k:None for k in clean_metrics}
-        vq_attack_metrics = {k:None for k in clean_metrics}
+        attack_defense_metrics = {k:None for k in clean_metrics}
 
         if adv_patch is not None:
             print(f"attacked image evaluation")
             attack_metrics = self(model=model, adv_patch=adv_patch, **kwargs)
-        if vq:
-            print(f"clean image with maskgit reconstruction")
-            clean_vq_metrics = self(model=model, adv_patch=None, vq=vq, **kwargs)
-            print(f"attacked image with maskgit reconstruction")
-            vq_attack_metrics = self(model=model, adv_patch=adv_patch, vq=vq, **kwargs)
+        if defenser is not None:
+            print(f"clean image with {defenser}")
+            clean_defense_metrics = self(model=model, adv_patch=None, defenser=defenser, **kwargs)
+            print(f"attacked image with {defenser}")
+            attack_defense_metrics = self(model=model, adv_patch=adv_patch, defenser=defenser, **kwargs)
         
         return {
             k:{
                 'clean':clean_metrics[k],
-                'clean_vq':clean_vq_metrics[k],
+                'clean_defense':clean_defense_metrics[k],
                 'attack':attack_metrics[k],
-                'vq_fix':vq_attack_metrics[k]
+                'attack_defense':attack_defense_metrics[k]
             }
             for k in clean_metrics
         }
