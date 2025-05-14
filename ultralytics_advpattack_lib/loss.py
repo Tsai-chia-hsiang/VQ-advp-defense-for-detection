@@ -15,14 +15,13 @@ __all__ = [
     "Supervised_V8Detection_MaxProb_Loss",
     "TotalVariation",
     "NPSCalculator"
-
 ]
 
 DEFAULT_PB_FILE =_CFG_DIR_/"30values.txt"
 
 class Supervised_V8Detection_MaxProb_Loss(v8DetectionLoss):
     
-    def __init__(self, model:DetectionModel, to_attack:torch.Tensor, logit_to_prob:bool=False, tal_topk=10):
+    def __init__(self, model:DetectionModel, to_attack:torch.Tensor, conf:float=0.25, tal_topk=10):
 
         assert isinstance(model, DetectionModel)
         super().__init__(model, tal_topk)
@@ -30,8 +29,12 @@ class Supervised_V8Detection_MaxProb_Loss(v8DetectionLoss):
         if isinstance(self.hyp, dict):
             self.hyp = IterableSimpleNamespace(**self.hyp)
         
+        self.hyp.box = 7.5 # (float) box loss gain
+        self.hyp.cls = 0.5 # (float) cls loss gain (scale with pixels)
+        self.hyp.dfl = 1.5
+        
         self.to_attack = to_attack.detach().clone()
-        self.logit_to_prob = logit_to_prob
+        self.conf = conf
 
     def __call__(self, preds, batch):
 
@@ -68,26 +71,31 @@ class Supervised_V8Detection_MaxProb_Loss(v8DetectionLoss):
             gt_bboxes,
             mask_gt,
         )
-        
-        return self.extract_fg_max_prob(target_scores=target_scores, pscores=pred_scores)
-    
-    def extract_fg_max_prob(self, target_scores:torch.Tensor, pscores:torch.Tensor)->torch.Tensor:
-        
+        target_scores_sum = max(target_scores.sum(), 1)
+
         if self.to_attack.device != target_scores.device:
             self.to_attack = self.to_attack.to(target_scores.device)
+
         
-        pred_scores = F.sigmoid(pscores) if self.logit_to_prob else pscores
+        pred_scores = pred_scores.sigmoid()
+        conf, cls_idx = pred_scores.max(dim=-1)
+        
+        fg_mask = fg_mask & (conf >= self.conf) & torch.isin(cls_idx, self.to_attack)
     
-        logit, cls_idx = target_scores.max(dim=-1)
-        attack_mask = (logit > 0) & torch.isin(cls_idx, self.to_attack)
-        fg_scores = pred_scores[attack_mask].max()
-        if attack_mask.any():
-            fg_scores = pred_scores[attack_mask].max()  # Get max score among valid samples
-            return fg_scores.mean()  # Mean over batch
+        if fg_mask.sum():
+            
+            l,_ = torch.max(conf[fg_mask], dim=-1)
+            target_bboxes /= stride_tensor
+            iou, dfl = self.bbox_loss(
+                pred_distri, pred_bboxes, anchor_points, 
+                target_bboxes, target_scores, target_scores_sum, fg_mask
+            )
+            iou *= self.hyp.box
+            dfl *= self.hyp.dfl
+            return torch.stack([l.mean(), -iou, -dfl], dim=0)
         else:
-            return torch.tensor(0.0, device=target_scores.device)  
-
-
+            return torch.tensor([0.0, 0.0, 0.0], device=target_scores.device)  
+      
 class V8Detection_MaxProb_Loss(nn.Module):
 
     def __init__(self, model:DetectionModel, to_attack:torch.Tensor, conf:float=0.25, *args, **kwargs):
@@ -110,15 +118,15 @@ class V8Detection_MaxProb_Loss(nn.Module):
         _, pred_scores = torch.cat([xi.view(feats[0].shape[0], self.no, -1) for xi in feats], 2).split(
             (self.reg_max*4, self.nc), 1
         )
-        pred_scores = pred_scores.permute(0, 2, 1).contiguous()
-        normal_confs = pred_scores.sigmoid()
-        logit, cls_idx = normal_confs.max(dim=-1)
-        attack_mask = (logit >= self.conf) & torch.isin(cls_idx, self.to_attack)
+       
+        pred_scores = pred_scores.permute(0, 2, 1).contiguous().sigmoid()
+        conf, cls_idx = pred_scores.max(dim=-1)
+        attack_mask = (conf >= self.conf) & torch.isin(cls_idx, self.to_attack)
         
         if attack_mask.sum() == 0:
             return torch.tensor(0.0, device=pred_scores.device)
         
-        l,_ = torch.max(normal_confs[attack_mask], dim=-1)
+        l,_ = torch.max(conf[attack_mask], dim=-1)
         
         return l.mean()
     
