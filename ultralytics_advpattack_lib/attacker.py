@@ -72,8 +72,37 @@ class PatchAttacker():
         grid = F.affine_grid(theta, patch.size(), align_corners=False)
         return F.grid_sample(patch, grid, align_corners=False)
         
-    def __call__(self, img:torch.Tensor, patch:torch.Tensor, bboxes:torch.Tensor, batch_idx:torch.Tensor, return_mask:bool=True, patch_random_rotate:bool=True, patch_blur:bool=True):
+    def __call__(self, img:torch.Tensor, patch:torch.Tensor, bboxes:torch.Tensor, batch_idx:torch.Tensor, weak_aug:bool=True, patch_random_rotate:bool=True, patch_blur:bool=True, return_mask:bool=True):
+        """
+        Args
+        --
+        - img: torch Tensor
+            - source images 
+            - BxCxHxW
+        - patch: torch Tensor
+            - the patch for adversarial attacking
+            - CxHxW 
+        - bboxes: torch Tensor
+            - normalized bounding box [[x,y,w,h]]
+        - batch_idx: torch Tensor
+            - To tell the bboxes[i] belongs to which image
+        - patch_random_rotate: bool, default False
+            - Wether to apply random ratation on patch
+        - patch_blur: bool, default True
+            - Wether to apply median pooling on patch
+        - weak_aug: bool, default True
+            - Wether to apply random constrast, brightness, and noise addition augmentation on patch
+        - mask: bool, default False
+            - Wether to return masks of attacked location 
         
+        Return
+        --
+        A tuple of (torch.Tensor, torch.Tensor|None):
+        - if `mask` is True:
+            attacked images (in torch format, B,C,H,W), mask 
+        - otherwise:
+            attacked images (in torch format, B,C,H,W), None
+        """
         assert img.device == patch.device
         dev = img.device
         origin_box = scale_box(boxes=bboxes, imgsize=img.size()[::-1][:2], direction='back')
@@ -84,14 +113,18 @@ class PatchAttacker():
         psize = patch.size()[1:] # CxHxW
         pad = ((img.size(-1) - patch.size(-1)) / 2, (img.size(-2) - patch.size(-2)) / 2 )# W pad, H pad
         n_boxes = bboxes.size(0)
-        
-        contrast = PatchAttacker.uniform_mask(uniform_bound=self.contrast, psize=psize, n_instantces=n_boxes, device=dev)
-        brightness = PatchAttacker.uniform_mask(uniform_bound=self.brightness, psize=psize, n_instantces=n_boxes, device=dev)
-        noise = torch.empty(brightness.size(),dtype=torch.float32, device=dev).uniform_(self.noise[0], self.noise[1]) * self.noise_factor
-        patch = patch.expand(n_boxes, *psize)
-        patch = patch*contrast + brightness + noise
-        patch = torch.clamp(patch, 0.000001, 0.99999)
 
+        
+        if weak_aug:
+            contrast = PatchAttacker.uniform_mask(uniform_bound=self.contrast, psize=psize, n_instantces=n_boxes, device=dev)
+            brightness = PatchAttacker.uniform_mask(uniform_bound=self.brightness, psize=psize, n_instantces=n_boxes, device=dev)
+            noise = torch.empty(brightness.size(),dtype=torch.float32, device=dev).uniform_(self.noise[0], self.noise[1]) * self.noise_factor
+            patch = patch.expand(n_boxes, *psize)
+            patch = patch*contrast + brightness + noise
+            patch = torch.clamp(patch, 0.000001, 0.99999)
+        else:
+            patch = patch.expand(n_boxes, *psize)
+            
         patch = F.pad(patch, (int(pad[0] + 0.5), int(pad[0]), int(pad[1] + 0.5), int(pad[1])), mode='constant', value=0)
         angle =None
         if patch_random_rotate:
@@ -117,11 +150,11 @@ class PatchAttacker():
             return img, masks
         return img, None
 
-    def attack_yolo_batch(self, batch, patch:torch.Tensor, patch_random_rotate:bool=False, patch_blur:bool=True, plot:bool=False, mask:bool=False,**kwargs) -> dict:
+    def attack_yolo_batch(self, batch, patch:torch.Tensor, patch_random_rotate:bool=True, patch_blur:bool=True, weak_aug:bool=True, plot:bool=False, mask:bool=False,**kwargs) -> dict:
         """
         Apply the transformation in place at the batch level, 
         
-        ## Please run the process inside `preprocess()` function in Ultralytics' Trainer and Validator first then call this function
+        ## Please applu `preprocess()` function in Ultralytics' Trainer and Validator first then use this function
             - img and label move to device, normalize the image
         
         Args
@@ -130,9 +163,12 @@ class PatchAttacker():
             - ultrayltics YOLODataset batch 
         - patch: torch Tensor
             - the patch for adversarial attacking 
-        - random_rotation_patch: bool, default False
-            - Wether to apply random ratation
-                - For attacker's argument
+        - patch_random_rotate: bool, default True
+            - see __call__()
+        - patch_blur: bool, default True
+            - see __call__()
+        - weak_aug: bool, default True
+            - see __call__()
         - mask: bool, default False
             - Wether return masks of attacked location 
         - plot: bool, defualt False
@@ -143,6 +179,7 @@ class PatchAttacker():
         Return
         --
         batch, whos value of "img" is the attacked version of origin "img"
+        - if mask is True, the batch will be added an extra key advp_mask which hold the value of masks
         """
         
         batch["img"], masks = self(
