@@ -32,7 +32,7 @@ class Supervised_V8Detection_MaxProb_Loss(v8DetectionLoss):
         self.hyp.box = 7.5 # (float) box loss gain
         self.hyp.cls = 0.5 # (float) cls loss gain (scale with pixels)
         self.hyp.dfl = 1.5
-        
+        self.loss_w = torch.tensor([self.hyp.cls, self.hyp.box, self.hyp.dfl])
         self.to_attack = to_attack.detach().clone()
         self.conf = conf
 
@@ -61,10 +61,10 @@ class Supervised_V8Detection_MaxProb_Loss(v8DetectionLoss):
         pred_bboxes = self.bbox_decode(anchor_points, pred_distri)  # xyxy, (b, h*w, 4)
         # dfl_conf = pred_distri.view(batch_size, -1, 4, self.reg_max).detach().softmax(-1)
         # dfl_conf = (dfl_conf.amax(-1).mean(-1) + dfl_conf.amax(-1).amin(-1)) / 2
-
+        confident = pred_scores.detach().sigmoid()
         _, target_bboxes, target_scores, fg_mask, _ = self.assigner(
             # pred_scores.detach().sigmoid() * 0.8 + dfl_conf.unsqueeze(-1) * 0.2,
-            pred_scores.detach().sigmoid(),
+            confident,
             (pred_bboxes.detach() * stride_tensor).type(gt_bboxes.dtype),
             anchor_points * stride_tensor,
             gt_labels,
@@ -75,26 +75,30 @@ class Supervised_V8Detection_MaxProb_Loss(v8DetectionLoss):
 
         if self.to_attack.device != target_scores.device:
             self.to_attack = self.to_attack.to(target_scores.device)
+        if self.loss_w.device != target_scores.device:
+            self.loss_w = self.loss_w.to(target_scores.device)
+         
+        conf, cls_idx = confident.max(dim=-1)
+        att_mask = (conf >= self.conf) & torch.isin(cls_idx, self.to_attack)
+        fg_mask = fg_mask & att_mask
 
+        loss = torch.tensor([0.0,0.0,0.0], device=pred_scores.device)
         
-        pred_scores = pred_scores.sigmoid()
-        conf, cls_idx = pred_scores.max(dim=-1)
+        if att_mask.sum():
+            l,_ = torch.max(pred_scores.sigmoid()[att_mask], dim=-1)
+            loss[0] = -l.mean()
         
-        fg_mask = fg_mask & (conf >= self.conf) & torch.isin(cls_idx, self.to_attack)
-    
         if fg_mask.sum():
             
-            l,_ = torch.max(conf[fg_mask], dim=-1)
             target_bboxes /= stride_tensor
-            iou, dfl = self.bbox_loss(
+            loss[1], loss[2] = self.bbox_loss(
                 pred_distri, pred_bboxes, anchor_points, 
                 target_bboxes, target_scores, target_scores_sum, fg_mask
             )
-            iou *= self.hyp.box
-            dfl *= self.hyp.dfl
-            return torch.stack([l.mean(), -iou, -dfl], dim=0)
-        else:
-            return torch.tensor([0.0, 0.0, 0.0], device=target_scores.device)  
+        
+        loss = loss * self.loss_w
+
+        return -loss
       
 class V8Detection_MaxProb_Loss(nn.Module):
 
