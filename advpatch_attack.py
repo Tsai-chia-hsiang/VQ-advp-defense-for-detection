@@ -1,16 +1,16 @@
 import os
 import warnings
 import logging
+from pathlib import Path
+from argparse import ArgumentParser
 logging.basicConfig(level=logging.ERROR)
 warnings.simplefilter("ignore")
-import os
 import json
+import math
 import torch
 from ultralytics import YOLO
 from ultralytics_advpattack_lib.train import AdvPatchAttack_YOLODetector_Trainer
 from ultralytics_advpattack_lib.validation import AdvPatchAttack_YOLODetector_Validator
-from pathlib import Path
-from argparse import ArgumentParser
 from tools import write_json, args2dict, write_yaml, load_yaml
 from ultralytics.utils.torch_utils import select_device, init_seeds
 from ultralytics_advpattack_lib.attacker import DEFAULT_ATTACKER_CFG_FILE
@@ -49,9 +49,14 @@ def train_advpatch(trainer_args, patch_transform_args, hyp, **kwargs):
     print(json.dumps(train_result, indent=4))
 
 def inference(infer_args, patch_transform_args, **kwargs):
+
     init_seeds(infer_args['seed'], deterministic=infer_args['deterministic'])
+    
     del infer_args['seed'], infer_args['deterministic']
-    attack(**infer_args, patch_transform_args=patch_transform_args)
+    infer_args['attack_cls'] = load_yaml(infer_args['attack_cls'])
+    infer_args['patch_transform_args'] = patch_transform_args
+    
+    attack(**infer_args)
 
 def lazy_arg_parsers():
     
@@ -82,16 +87,17 @@ def lazy_arg_parsers():
     parser.add_argument("--patch_blur", action='store_true')
     parser.add_argument("--attack_cls", type=Path, default=Path("attack_cls.yaml"))
     parser.add_argument("--clean", action='store_true')
-
-    
+    parser.add_argument("--not_square", action='store_true')
+    parser.add_argument("--init_patch", type=Path, default=None)
     # training hyp
-    import math
+    
     parser.add_argument("--lr", type=float, default=1e-2)
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--patience", type=int, default=math.inf)
     parser.add_argument("--method", type=str, default='gd')
   
     parser.add_argument("--debug", action='store_true')
+    
     cli_args = parser.parse_args()
     cli_args.save_dir = cli_args.project/cli_args.name
     cli_args.origin_data = cli_args.data
