@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Literal, Iterable
 from pathlib import Path
 import gc
 import numpy as np
@@ -194,3 +194,49 @@ def get_dataloader(data_args:dict, dataset_args:dict, split:Literal['train', 'va
         shuffle= split == 'train', 
         workers=data_args.workers
     )
+
+def clone_ultralytics_proj(proj:Path, default_data:Path, need_train=False)->tuple[tuple[Path, bool], tuple[Path, bool],tuple[Path, bool]]:
+    
+    assert proj.is_dir()
+    proj = proj.absolute()
+
+    temp_data = False
+    val_labels_link = False
+    train_labels_link = False
+    reference_proj = None
+
+    cfg = load_yaml(default_data)
+    reference_proj = Path(cfg['path']).absolute()
+    
+    data = proj/"data.yaml"
+    train_name = str(cfg['train'])
+    val_name = str(cfg['val'])
+    
+    proj_cfg = load_yaml(data) if data.is_file() else None
+
+    if proj_cfg is not None:
+        train_name = str(proj_cfg['train'])
+        val_name = str(proj_cfg['val'])
+        proj_cfg['path'] = str(proj)
+        write_yaml(proj_cfg, proj_cfg)
+    else:
+        cfg['path'] = str(proj)
+        temp_data=True
+        write_yaml(cfg, data)
+    
+    val_label_dir = proj/val_name/"labels"
+    train_label_dir = proj/train_name/"labels"
+
+    if (not val_label_dir.is_dir()) and (not val_label_dir.is_symlink()):
+        reference_val_labels = reference_proj/f"{cfg['val']}"/"labels"
+        assert reference_val_labels.exists(), FileNotFoundError(f"If no val/labels under proj, please provide reference val labels directory")
+        val_labels_link = True
+        val_label_dir.symlink_to(target=reference_val_labels, target_is_directory=True)
+    
+    if (not train_label_dir.is_dir()) and (not train_label_dir.is_symlink()) and need_train:
+        reference_train_labels = reference_proj/f"{cfg['train']}"/"labels"
+        assert reference_train_labels.exists(), FileNotFoundError(f"If no train/labels under proj, please provide reference train labels directory")
+        train_labels_link = True
+        train_label_dir.symlink_to(target=reference_train_labels, target_is_directory=True)
+    
+    return (data, temp_data), (val_label_dir, val_labels_link), (train_label_dir, train_labels_link)
