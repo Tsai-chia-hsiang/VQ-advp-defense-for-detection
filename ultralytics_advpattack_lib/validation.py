@@ -16,7 +16,6 @@ import sys
 import os
 from pathlib import Path
 sys.path.append(os.path.abspath(Path(__file__).parent))
-from deepcvext import tensor2img
 from tools import load_yaml
 
 class AdvPatchAttack_YOLODetector_Validator(DetectionValidator):
@@ -53,19 +52,6 @@ class AdvPatchAttack_YOLODetector_Validator(DetectionValidator):
         self.training = False
         self.attacker = PatchAttacker(**load_yaml(attacker)) if isinstance(attacker, Path) else attacker
    
-    """
-    def _save_img(self, batch)->None:
-        imgs = tensor2img(batch["img"])
-        array = batch["img"].detach().permute(0, 2, 3, 1).cpu().numpy()
-        if not (self.save_dir/"img").is_dir():
-            (self.save_dir/"img").mkdir(parents=True, exist_ok=True)
-        if not (self.save_dir/"np").is_dir():
-            (self.save_dir/"np").mkdir(parents=True, exist_ok=True)
-        for im, a, name in zip(imgs, array, batch['im_file']):
-            cv2.imwrite(self.save_dir/"img"/Path(name).name, im)
-            np.save(self.save_dir/"img"/Path(name).name)
-    """
-    
     @torch.no_grad()
     def __call__(self, model:DetectionModel, adv_patch:Optional[torch.Tensor]=None, defenser=None, **pr_args):
       
