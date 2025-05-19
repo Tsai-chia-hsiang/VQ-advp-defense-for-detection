@@ -30,17 +30,21 @@ sys.path.append(osp.abspath(_LOCAL_DIR_.parent))
 from deepcvext.convert import tensor2img
 from tools import write_json, refresh_dir, load_yaml, write_yaml
 
-def generate_patch(ptype:Literal['gray', 'random']="gray", psize:int=300, device:torch.device = torch.device("cpu")) -> nn.Parameter:
+def generate_patch(ptype:Literal['gray', 'random']="gray", psize:int=300, init_patch:Path=None, device:torch.device = torch.device("cpu")) -> nn.Parameter:
     """
     Generate a random patch as a starting point for optimization.
     """
-    adv_patch:torch.Tensor=None
-    match ptype:
-        case 'gray':
-            adv_patch = torch.full((3, psize, psize), 0.5, device=device)
-        case 'random':
-            adv_patch = torch.rand((3, psize, psize), device=device)
     
+    adv_patch:torch.Tensor=None
+    if init_patch is not None:
+        adv_patch = torch.load(init_patch, map_location=device, weights_only=False)['patch']
+    else:
+        match ptype:
+            case 'gray':
+                adv_patch = torch.full((3, psize, psize), 0.5, device=device)
+            case 'random':
+                adv_patch = torch.rand((3, psize, psize), device=device)
+        
     return nn.Parameter(adv_patch)
 
 
@@ -84,6 +88,7 @@ class AdvPatchAttack_YOLODetector_Trainer():
         save_dir:Path, loss_args:dict[str, Any]=None,
         device:str='0', batch:int=16, seed:int=891122, deterministic:bool=True, 
         imgsz:int=640, psize:int=300, ptype:str='random',
+        init_patch:Path=None,
         conf:float=0.25, attacker:Path=DEFAULT_ATTACKER_CFG_FILE, 
         objective:Literal['cls', 'obj', 'obj-cls']='obj-cls',
         sup_prob_loss:bool=False, tensorboard:bool=True,
@@ -115,7 +120,7 @@ class AdvPatchAttack_YOLODetector_Trainer():
         M = setup_YOLOdetection_model(model=self.detector, imgsz=self.imgsz, device=self.device)
         
         self.attacker = PatchAttacker(**load_yaml(attacker))
-        self.adv_patch = generate_patch(ptype=ptype, psize=psize, device=self.device)
+        self.adv_patch = generate_patch(ptype=ptype, psize=psize, device=self.device, init_patch=init_patch)
         
         self.optimizer:Optimizer = None
         self.scheduler:LRScheduler = None
@@ -147,6 +152,7 @@ class AdvPatchAttack_YOLODetector_Trainer():
             'data':str(data),
             'imgsz': self.imgsz, 
             'batch':batch,
+            'init_path':init_patch,
             'objective':self.objective,
             'pretrained_weight':str(self.detector),
             'psize':psize, 'ptype':ptype,
