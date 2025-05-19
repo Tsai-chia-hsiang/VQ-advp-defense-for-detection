@@ -1,47 +1,50 @@
 hyp:
-- lr
-- epochs
-- patience
+  - lr
+  - epochs
+  - patience
 infer_args:
-- pretrained_patch
-- seed
-- deterministic
-- device
-- save_dir
-- data
-- attacker
+  - pretrained_patch
+  - seed
+  - deterministic
+  - device
+  - save_dir
+  - data
+  - attacker
+  - square
+  - attack_cls
 patch_transform_args:
-- patch_random_rotate
-- patch_blur
+  - patch_random_rotate
+  - patch_blur
 trainer_args:
-- detector
-- data
-- attack_cls
-- conf
-- save_dir
-- psize
-- ptype
-- attacker
-- batch
-- device
-- sup_prob_loss
-- imgsz
-- origin_data
-- seed
-- deterministic
-- tensorboard
-- objective
+  - detector
+  - data
+  - attack_cls
+  - conf
+  - save_dir
+  - psize
+  - ptype
+  - attacker
+  - batch
+  - device
+  - sup_prob_loss
+  - imgsz
+  - origin_data
+  - seed
+  - deterministic
+  - tensorboard
+  - objective
+  - init_patch
 validator_args:
-- detector
-- pretrained_patch
-- imgsz
-- data
-- save_dir
-- attacker
-- batch
-- seed
-- deterministic
-- device
-- origin_data
-- conf
-- clean
+  - detector
+  - pretrained_patch
+  - imgsz
+  - data
+  - save_dir
+  - attacker
+  - batch
+  - seed
+  - deterministic
+  - device
+  - origin_data
+  - conf
+  - clean
