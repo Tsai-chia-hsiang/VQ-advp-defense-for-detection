@@ -13,7 +13,7 @@ detector: !!python/object/apply:pathlib._local.PosixPath
 - pretrained
 - yolov8n.pt
 deterministic: true
-device: '1'
+device: '0'
 imgsz: 640
 origin_data: !!python/object/apply:pathlib._local.PosixPath
 - datasets

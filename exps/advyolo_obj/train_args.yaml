@@ -2,8 +2,10 @@ batch: 16
 conf: 0.25
 data: datasets/INRIAPerson/runtime_inria.yaml
 deterministics: true
-epochs: 40
+epochs: 4
 imgsz: 640
+init_path: !!python/object/apply:pathlib._local.PosixPath
+- exps/advyolo_oldobj/worst.pt
 lr: 0.01
 method: gd
 objective: obj
