@@ -2,11 +2,13 @@ batch: 16
 conf: 0.25
 data: datasets/INRIAPerson/runtime_inria.yaml
 deterministics: true
-epochs: 10
+epochs: 20
 imgsz: 640
+init_path: !!python/object/apply:pathlib._local.PosixPath
+- exps/advyolo_oldobjcls/worst.pt
 lr: 0.01
 method: gd
-objective: cls-obj
+objective: obj-cls
 patch_blur: true
 patch_random_rotate: true
 pretrained_weight: pretrained/yolov8n.pt

@@ -3,11 +3,12 @@ attacker: !!python/object/apply:pathlib._local.PosixPath
 - cfg
 - attacker.yaml
 batch: 16
-clean: false
+clean: true
 conf: 0.25
 data: !!python/object/apply:pathlib._local.PosixPath
-- datasets/INRIAPerson
-- runtime_inria.yaml
+- exps
+- advyolo_objcls
+- data.yaml
 detector: !!python/object/apply:pathlib._local.PosixPath
 - pretrained
 - yolov8n.pt
@@ -22,9 +23,9 @@ patch_blur: true
 patch_random_rotate: true
 pretrained_patch: !!python/object/apply:pathlib._local.PosixPath
 - exps
-- advyolo_clsobj
+- advyolo_objcls
 - worst.pt
 save_dir: !!python/object/apply:pathlib._local.PosixPath
 - exps
-- advyolo_clsobj
+- advyolo_objcls
 seed: 891122
