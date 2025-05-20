@@ -1,6 +1,6 @@
 LR=0.01
 conf=0.25
-epochs=10
+epochs=20
 name=advyolo_objcls
 python advpatch_attack.py \
     --task $1 --name $name \
@@ -9,4 +9,5 @@ python advpatch_attack.py \
     --conf $conf  --lr $LR \
     --objective obj-cls\
     --device $2 --epochs $epochs\
-    --sup_prob_loss
+    --sup_prob_loss \
+    --init_patch exps/advyolo_oldobjcls/worst.pt
