@@ -7,3 +7,4 @@ debug
 !./adv_patch
 .vscode
 **/*cache
+**/*.pth
