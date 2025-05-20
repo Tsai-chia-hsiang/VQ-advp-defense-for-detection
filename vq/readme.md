@@ -1,0 +1,1 @@
+from [MoVQGAN](https://github.com/ai-forever/MoVQGAN.git)
