@@ -32,7 +32,7 @@ class MOVQ(pl.LightningModule):
         self.image_key = image_key
         self.encoder = Encoder(**ddconfig)
         self.decoder = MOVQDecoder(zq_ch=embed_dim, **ddconfig)
-        self.scale = 8
+        self.encode_scaledown = 8 # TODO get from ddconfig instead of hard assign
         if learning_rate is not None:
             self.learning_rate = learning_rate
         self.quantize = VectorQuantizer(n_embed, embed_dim, beta=0.25,
@@ -93,11 +93,29 @@ class MOVQ(pl.LightningModule):
         return dec
     
     def code_mask(self, mask:torch.Tensor, code:torch.Tensor)->torch.Tensor:
-        assert mask.shape[0] == code.shape[0]
-        assert mask.shape[-2:] == code.shape[-2:]
-        if mask.ndim == 3:
-            # BHW
-            mask = mask.unsqueeze(1)
+        
+        """
+        mask: 
+            - h x w 
+            - B x h x w
+            - B x 1 x h x w
+        """
+        assert mask.shape[-2:] == code.shape[-2:], ValueError(f"last 2 dims (h x w) must be same with code: code: {code.shape} and mask: {mask.shape}")
+        match mask.ndim:
+            case 2:
+                # h x w -> h x w x 1 -> 1 x h x w -> 1 x 1 x h x w
+                mask = mask.unsqueeze(-1).permute(2,0,1).unsqueeze(0)
+            case 3:
+                assert mask.shape[0] == code.shape[0], ValueError(f"for 3 dims mask, only accept B x h x w, but you give {mask.shape}")
+                # B x h x w -> B x 1 x h x w
+                mask = mask.unsqueeze(1)
+            case 4:
+                # B x 1 x h x w
+                assert mask.shape[0] == code.shape[0], ValueError(f"for 4 dims mask, only accept B x 1 x h x w, but you give {mask.shape}")
+                assert mask.shape[1] == 1, ValueError(f"for 4 dims, only accept: B x 1 x h x w, but you give {mask.shape}")
+            case _:
+                raise ValueError(f"only accept : h x w | B x h x w | B x 1 x h x w . You give {mask.shape}")
+    
         return mask.repeat(1, code.shape[1], 1, 1)
 
     def forward(self, input):
@@ -189,7 +207,7 @@ class MOVQ(pl.LightningModule):
         if img.ndim == 2:
             img = np.expand_dims(img, -1)
         s = np.asarray(img.shape[:2])
-        pad = (self.scale -s % self.scale )%self.scale
+        pad = (self.encode_scaledown -s % self.encode_scaledown )%self.encode_scaledown
         p0 = pad//2 
         p1 = p0 + pad%2
         paded_img = np.full((*(s+p0+p1), img.shape[-1]), pad_value, dtype=img.dtype)
