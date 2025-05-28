@@ -11,6 +11,7 @@ from omegaconf import OmegaConf
 import numpy as np
 import cv2
 from typing import Iterable
+from pathlib import Path
 
 class MOVQ(pl.LightningModule):
     
@@ -193,7 +194,12 @@ class MOVQ(pl.LightningModule):
         return self.decoder.conv_out.weight
 
     @classmethod
-    def from_cfg(cls, cfg_file:os.PathLike, loss=None, sane_index_shape=True, on_device=torch.device('cuda'))->"MOVQ":
+    def from_cfg(
+        cls, 
+        cfg_file:os.PathLike=Path("/datasets")/"ckpts"/"movq"/"270M.yaml", 
+        loss=None, sane_index_shape=True, 
+        on_device=torch.device('cuda')
+    )->"MOVQ":
         cfg = OmegaConf.load(cfg_file)
         cfg['model']['params']['lossconfig'] = loss
         cfg['model']['params']['sane_index_shape'] = sane_index_shape
@@ -217,7 +223,7 @@ class MOVQ(pl.LightningModule):
         return paded_img, (top, bottom, left, right)
 
     @torch.no_grad()
-    def recons_cv2(self, img:np.ndarray, degrad_levels:Iterable[int]=(0,), pad_value:int=0)->tuple[list[np.ndarray], torch.Tensor]:
+    def recons_cv2(self, img:np.ndarray, degrad_levels:Iterable[int]=(0,), pad_value:int=0)->tuple[list[np.ndarray], torch.Tensor, torch.Tensor, Iterable[int]]:
         
         if isinstance(degrad_levels, int):
             degrad_levels = [degrad_levels]
