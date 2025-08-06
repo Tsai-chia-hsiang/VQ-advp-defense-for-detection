@@ -13,7 +13,7 @@ Attack methods:
         
         - We use the patches from [adversarial-yolo](https://gitlab.com/EAVISE/adversarial-yolo.git) as initial patches and finetune them to attack YOLOv8n
   
-    - |Detector|Attack dataset|Generate Adversarial Patch|Attack Validation Images
+    - |Detector|Attack dataset|Generate Adversarial Patch|Performing Attack
       |-|-|-|-|
       |YOLOv8n, pretrained on COCO, conduct by Ultrayltics|INRIA Person|`sh scripts/advyolo_{$PATCH_TYPE}_v8.sh train $DEVICE_ID`|`sh scripts/advyolo_{$PATCH_TYPE}_v8.sh infer $DEVICE_ID`|
 
@@ -25,7 +25,7 @@ Attack methods:
         - __objcls__ : maximizing postive sample's iou loss while minimizing thire class probability
             - `sh scripts/advyolo_objcls_v8.sh train $DEVICE_ID`
             - finetune from `patches/class_detection.png` from from [adversarial-yolo](https://gitlab.com/EAVISE/adversarial-yolo.git)
-        *Since the reference code didn't give the settings of upper, we didn't implement it
+
 
 ## Defense Performance (Detection mAP50) $\uparrow$
 Defense againsts adversarial patch attacked on INRIA Person validation set
