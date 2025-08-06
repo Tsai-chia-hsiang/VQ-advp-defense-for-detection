@@ -124,8 +124,6 @@ class Diff2HeatmapProcessor(
         """
         For processing images in torch order: B x C x H x W
         """
-        self.old_hw:tuple[int, int] = None # to store runtime given heatmap's origin h,w
-        
         self.smooth_kernel = smooth_k
         if not isinstance(self.smooth_kernel, torch.Tensor):
             self.smooth_kernel = torch.ones((3, 1, smooth_k, smooth_k), dtype=torch.float32)/(smooth_k ** 2)
@@ -216,7 +214,7 @@ class Diff2HeatmapProcessor(
         order = process_order if process_order is not None else self.default_order
 
         for task in order:
-            heatmap = self.process_map[task](heatmap=heatmap, old_hw=origin_shape)
+            heatmap = self.process_map[task](heatmap=heatmap, origin_shape=origin_shape)
 
         if to_img:
             if order[-1] != 'normalize':
@@ -237,7 +235,10 @@ class Diff2HeatmapProcessor(
         heatmap = self(diff, process_order, to_img=True)
         h = heatmap.detach().cpu().numpy()
 
-        mask = thresholding(img=h, thr_method=thr_method, thr=thr, binary=True, t_value=False)
+        mask = thresholding(
+            img=h, thr_method=thr_method, thr=thr, 
+            binary=True, t_value=False
+        )
 
         rf = return_framework if return_framework is not None else self.default_return
         match rf:
