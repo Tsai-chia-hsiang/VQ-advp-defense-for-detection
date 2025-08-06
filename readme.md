@@ -53,7 +53,7 @@ Defense againsts adversarial patch attacked on INRIA Person validation set
 \* : reported from [PAD: Patch-Agnostic Defense against Adversarial Patch Attacks, CVPR2024](https://openaccess.thecvf.com/content/CVPR2024/papers/Jing_PAD_Patch-Agnostic_Defense_against_Adversarial_Patch_Attacks_CVPR_2024_paper.pdf)
 
 
-## defense image FID $\downarrow$
+## FID of Defense image set with clean image set $\downarrow$
 
 |patch|pixel space masking|token space masking| 
 |-|-|-|
