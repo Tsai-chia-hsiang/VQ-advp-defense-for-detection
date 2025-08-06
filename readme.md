@@ -1,10 +1,11 @@
 # VQ for adversarial patch defense in YOLO series detection models
 
 ## Setup
+(At Ubuntu OS)
 1. Create a Python3.13 environment
-2. Install torch with cuda 12.8
-3. pip install -r requirements.txt
-4. git clone https://github.com/Tsai-chia-hsiang/deepcvext.git
+2. Follow PyTorch offical website to install torch torchvision with cuda 12.8
+3. ```pip install -r requirements.txt```
+4. ```git clone https://github.com/Tsai-chia-hsiang/deepcvext.git```
 
 ## Adversarial Path generation & attacking:
 Attack methods:
