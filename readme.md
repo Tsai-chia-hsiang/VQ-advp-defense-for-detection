@@ -31,6 +31,54 @@ Attack methods:
             - `sh scripts/advyolo_objcls_v8.sh train $DEVICE_ID`
             - finetune from `patches/class_detection.png` from from [adversarial-yolo](https://gitlab.com/EAVISE/adversarial-yolo.git)
 
+## Token-space masking for defense
+```python vq_reconstruction.py```
+
+### Command Line Arguments
+
+### `--setting` *(str, default: `token`)*
+Specifies the space where masking is applied. Options:
+- `pixel`: Apply masking in the pixel space
+- `token`: Apply masking in the token space (default)
+
+### `--device` *(int, default: 0)*
+Specifies the CUDA device index.
+
+### `--clean_dir` *(Path)*
+Directory path to the clean image dataset.
+- Used to evaluate the defense mechanism on clean images to measure any potential degradation in performance.
+
+### `--smooth_k` *(int, default: 7)*
+Size of the smoothing kernel.
+
+### `--morph` *(store_true)*
+Apply PAD's morphological heatmap post-processing.
+- If not specified, this option is `False` by default.
+
+### `--atts` *(iterable of str, default: `('obj', 'objcls', 'upper')`)*
+Specifies which type(s) of adversarial patches to run the defense test on. Available options:
+- `obj`
+- `objcls`
+- `upper`
+
+If not specified, all three types will be processed.
+- In the visualization presented in the paper, only `obj` was used.
+
+
+## Image and Annotation Directory Format
+
+All images and bounding box annotations follow the directory structure and format required by [Ultralytics YOLO](https://github.com/ultralytics/yolov5).
+
+During validation:
+- The original bounding box directory will be symlinked to the directory containing the defended images.
+- The symlink is removed after validation.
+
+---
+
+## Execution Output
+
+After execution, the defended images are saved under the corresponding adversarial images directory:  
+
 
 ## Defense Performance (Detection mAP50) $\uparrow$
 Defense againsts adversarial patch attacked on INRIA Person validation set
