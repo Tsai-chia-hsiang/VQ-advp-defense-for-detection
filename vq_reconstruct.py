@@ -4,7 +4,7 @@ import cv2
 import numpy as np
 import torch
 from tqdm import tqdm
-
+from typing import Optional, Iterable
 from tools.path_utils import refresh_dir
 from tools.mask_utils import dbscan_mask, Diff2HeatmapProcessor
 from tools import write_json
@@ -107,15 +107,18 @@ def pixelspace_masking(
 
 
 def tmasking_and_decode_advyolo(
+    atts:str|Iterable[str],
     clean_dir:Path=Path("./datasets")/"INRIAPerson"/"yolodata",    
     proj_prefix:str="vq_tmask_recons", device:int=0,
-    smooth_k:int=7, pad_morph:bool=False
+    smooth_k:int=7, pad_morph:bool=False,
 ):
-
+    
     attacked_set = advyolo_attacked_set(
         proj_prefix=proj_prefix,
-        clean_proj=clean_dir
+        clean_proj=clean_dir,
+        atts = atts
     ) 
+
     result_dict = {}
     dev = torch.device('cuda', device)
     model = MOVQ.from_cfg(on_device=dev)
@@ -133,7 +136,6 @@ def tmasking_and_decode_advyolo(
         if pad_morph:
             proj = proj.parent/(proj.name+f"_morph")
 
-        #_ = input
         print(f"{att_set}: {pathes['img_dir']} defense -> {proj}")
         
         tokenspace_masking_and_decode(
@@ -155,14 +157,16 @@ def tmasking_and_decode_advyolo(
 
 
 def pmasking_advyolo(
+    atts:str|Iterable[str],
     clean_dir:Path=Path("./datasets")/"INRIAPerson"/"yolodata",    
-    proj_prefix:str="vq_pmask_recons_s", device:int=1
-):
-
+    proj_prefix:str="vq_pmask_recons_s", device:int=1,
+): 
     attacked_set = advyolo_attacked_set(
         proj_prefix=proj_prefix,
-        clean_proj=clean_dir
+        clean_proj=clean_dir,
+        atts = atts
     ) 
+ 
     result_dict = {}
     dev = torch.device('cuda', device)
     model = MOVQ.from_cfg(on_device=dev)
@@ -195,11 +199,13 @@ if __name__ == "__main__":
     parser.add_argument("--clean_dir", type=Path, default=Path("./datasets")/"INRIAPerson"/"yolodata")
     parser.add_argument("--smooth_k", type=int, default=7)
     parser.add_argument("--morph", action='store_true')
+    parser.add_argument("--atts", nargs='+', default=('obj', 'objcls', 'upper'), type=str)
     args = parser.parse_args()
-
+    
     match args.setting:
         case 'token':
             tmasking_and_decode_advyolo(
+                atts=args.atts,
                 clean_dir=args.clean_dir,
                 device=args.device,
                 smooth_k= args.smooth_k,
@@ -207,6 +213,7 @@ if __name__ == "__main__":
             )
         case 'pixel':
             pmasking_advyolo(
+                atts=args.atts,
                 clean_dir=args.clean_dir,
                 device=args.device
             )
